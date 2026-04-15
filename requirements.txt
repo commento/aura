@@ -1,0 +1,5 @@
+numpy
+opencv-python
+PyYAML
+sounddevice
+picamera2; platform_system == "Linux"

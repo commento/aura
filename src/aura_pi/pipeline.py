@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import hypot
+from pathlib import Path
+import platform
+
+import cv2
+
+from .audio import AudioAnalyzer, AudioFeatures
+from .config import AppConfig
+from .detectors import Detection, MotionPeopleDetector
+from .recorder import FfmpegRecorder
+from .renderer import AuraRenderer, TrackedPerformer
+from .vision import VideoSource
+
+
+@dataclass
+class TrackState:
+    track_id: int
+    bbox: tuple[int, int, int, int]
+    center: tuple[int, int]
+    age: int = 0
+    missing_frames: int = 0
+
+
+class PerformerTracker:
+    def __init__(self, max_distance: float, max_missing_frames: int):
+        self.max_distance = max_distance
+        self.max_missing_frames = max_missing_frames
+        self._next_track_id = 1
+        self._tracks: dict[int, TrackState] = {}
+
+    def update(self, detections: list[Detection]) -> list[TrackedPerformer]:
+        assigned_tracks: set[int] = set()
+        assigned_detections: set[int] = set()
+
+        for det_index, detection in enumerate(detections):
+            best_track_id = None
+            best_distance = float("inf")
+            for track_id, track in self._tracks.items():
+                if track_id in assigned_tracks:
+                    continue
+                dist = hypot(detection.center[0] - track.center[0], detection.center[1] - track.center[1])
+                if dist < self.max_distance and dist < best_distance:
+                    best_distance = dist
+                    best_track_id = track_id
+
+            if best_track_id is not None:
+                self._tracks[best_track_id].bbox = (detection.x, detection.y, detection.w, detection.h)
+                self._tracks[best_track_id].center = detection.center
+                self._tracks[best_track_id].age += 1
+                self._tracks[best_track_id].missing_frames = 0
+                assigned_tracks.add(best_track_id)
+                assigned_detections.add(det_index)
+
+        for det_index, detection in enumerate(detections):
+            if det_index in assigned_detections:
+                continue
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            self._tracks[track_id] = TrackState(
+                track_id=track_id,
+                bbox=(detection.x, detection.y, detection.w, detection.h),
+                center=detection.center,
+                age=1,
+            )
+
+        for track_id in list(self._tracks.keys()):
+            if track_id not in assigned_tracks:
+                self._tracks[track_id].missing_frames += 1
+            if self._tracks[track_id].missing_frames > self.max_missing_frames:
+                del self._tracks[track_id]
+
+        return [
+            TrackedPerformer(
+                track_id=track.track_id,
+                bbox=track.bbox,
+                center=track.center,
+                age=track.age,
+            )
+            for track in self._tracks.values()
+        ]
+
+
+class AuraPipeline:
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.video = VideoSource(
+            width=config.video.width,
+            height=config.video.height,
+            fps=config.video.fps,
+            source=config.video.source,
+            device_index=config.video.device_index,
+        )
+        self.detector = self._build_detector()
+        self.tracker = PerformerTracker(
+            max_distance=config.tracker.max_distance,
+            max_missing_frames=config.tracker.max_missing_frames,
+        )
+        self.audio = AudioAnalyzer(
+            sample_rate=config.audio.sample_rate,
+            block_size=config.audio.block_size,
+            device=config.audio.device,
+        )
+        self.renderer = AuraRenderer(
+            aura_radius=config.render.aura_radius,
+            aura_alpha=config.render.aura_alpha,
+            background_dim=config.render.background_dim,
+            trail=config.render.trail,
+            show_labels=config.render.show_labels,
+        )
+        self.recorder = None
+        self.audio_recording_path: Path | None = None
+        if config.recording.enabled:
+            self.recorder = FfmpegRecorder(
+                ffmpeg_bin=config.recording.ffmpeg_bin,
+                output_path=config.recording.output_path,
+                width=config.video.width,
+                height=config.video.height,
+                fps=config.video.fps,
+                video_codec=config.recording.video_codec,
+                pixel_format=config.recording.pixel_format,
+                crf=config.recording.crf,
+                preset=config.recording.preset,
+                audio_enabled=config.recording.audio_enabled,
+                audio_input_format=config.recording.audio_input_format,
+                audio_input_device=config.recording.audio_input_device,
+            )
+            if config.audio.enabled:
+                self.audio_recording_path = self.recorder.output_file.with_suffix(".wav")
+
+    def run(self) -> None:
+        self.video.start()
+        if self.config.audio.enabled:
+            if self.audio_recording_path is not None:
+                self.audio.start_recording(str(self.audio_recording_path))
+            self.audio.start()
+        self._setup_window()
+        paused = False
+        last_output = None
+
+        try:
+            while True:
+                if not paused or last_output is None:
+                    packet = self.video.read()
+                    detections = self.detector.detect(packet.frame)
+                    performers = self.tracker.update(detections)
+                    audio_features = self.audio.read() if self.config.audio.enabled else AudioFeatures()
+                    last_output = self.renderer.render(packet.frame, performers, audio_features)
+
+                if self.recorder is not None and last_output is not None and not paused:
+                    self.recorder.write(last_output)
+
+                cv2.imshow(self.config.video.window_name, last_output)
+
+                key = cv2.waitKey(30 if paused else 1) & 0xFF
+                if key in (27, ord("q"), ord("s")):
+                    break
+                if key == ord("p"):
+                    paused = not paused
+        finally:
+            self.video.stop()
+            self.audio.stop()
+            if self.recorder is not None:
+                self.recorder.close()
+                if self.audio_recording_path is not None:
+                    self.recorder.mux_audio(str(self.audio_recording_path))
+            cv2.destroyAllWindows()
+
+    def _setup_window(self) -> None:
+        cv2.namedWindow(self.config.video.window_name, cv2.WINDOW_NORMAL)
+        if hasattr(cv2, "WND_PROP_ASPECT_RATIO") and hasattr(cv2, "WINDOW_FREERATIO"):
+            cv2.setWindowProperty(
+                self.config.video.window_name,
+                cv2.WND_PROP_ASPECT_RATIO,
+                cv2.WINDOW_FREERATIO,
+            )
+        use_native_fullscreen = self.config.video.fullscreen_preview and platform.system() != "Darwin"
+        if use_native_fullscreen:
+            cv2.setWindowProperty(
+                self.config.video.window_name,
+                cv2.WND_PROP_FULLSCREEN,
+                cv2.WINDOW_FULLSCREEN,
+            )
+            try:
+                cv2.moveWindow(self.config.video.window_name, 0, 0)
+            except cv2.error:
+                pass
+        cv2.resizeWindow(
+            self.config.video.window_name,
+            self.config.video.width,
+            self.config.video.height,
+        )
+
+    def _build_detector(self):
+        detector_type = self.config.detector.type
+        if detector_type in {"motion", "motion_person", "motion_people"}:
+            return MotionPeopleDetector(
+                min_area=self.config.detector.min_area,
+                history=self.config.detector.history,
+                var_threshold=self.config.detector.var_threshold,
+                learning_rate=self.config.detector.learning_rate,
+            )
+        raise ValueError(f"Detector non supportato: {detector_type}")
