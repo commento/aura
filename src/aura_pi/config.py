@@ -25,6 +25,11 @@ class DetectorConfig:
     history: int
     var_threshold: int
     learning_rate: float
+    score_threshold: float = 0.4
+    max_detections: int = 6
+    model_path: str | None = None
+    labels_path: str | None = None
+    target_label: str = "person"
 
 
 @dataclass
@@ -82,10 +87,22 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 def load_config(path: str | Path) -> AppConfig:
     raw = _read_yaml(Path(path))
+    detector_raw = raw["detector"]
     return AppConfig(
         project=raw.get("project", {}),
         video=VideoConfig(**raw["video"]),
-        detector=DetectorConfig(**raw["detector"]),
+        detector=DetectorConfig(
+            type=detector_raw["type"],
+            min_area=detector_raw.get("min_area", 5000),
+            history=detector_raw.get("history", 250),
+            var_threshold=detector_raw.get("var_threshold", 64),
+            learning_rate=detector_raw.get("learning_rate", 0.001),
+            score_threshold=detector_raw.get("score_threshold", 0.4),
+            max_detections=detector_raw.get("max_detections", 6),
+            model_path=detector_raw.get("model_path"),
+            labels_path=detector_raw.get("labels_path"),
+            target_label=detector_raw.get("target_label", "person"),
+        ),
         tracker=TrackerConfig(**raw["tracker"]),
         audio=AudioConfig(**raw["audio"]),
         render=RenderConfig(**raw["render"]),

@@ -9,7 +9,7 @@ import cv2
 
 from .audio import AudioAnalyzer, AudioFeatures
 from .config import AppConfig
-from .detectors import Detection, MotionPeopleDetector
+from .detectors import Detection, HailoPersonDetector, MotionPeopleDetector
 from .recorder import FfmpegRecorder
 from .renderer import AuraRenderer, TrackedPerformer
 from .vision import VideoSource
@@ -201,5 +201,13 @@ class AuraPipeline:
                 history=self.config.detector.history,
                 var_threshold=self.config.detector.var_threshold,
                 learning_rate=self.config.detector.learning_rate,
+            )
+        if detector_type in {"hailo", "hailo_person"}:
+            return HailoPersonDetector(
+                model_path=self.config.detector.model_path,
+                labels_path=self.config.detector.labels_path,
+                score_threshold=self.config.detector.score_threshold,
+                max_detections=self.config.detector.max_detections,
+                target_label=self.config.detector.target_label,
             )
         raise ValueError(f"Detector non supportato: {detector_type}")

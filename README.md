@@ -21,7 +21,7 @@ La pipeline e' divisa in moduli:
 1. `vision.py`
    Acquisizione frame da camera USB via OpenCV oppure da Picamera2 come opzione secondaria.
 2. `detectors/`
-   Detector dei performer. Il progetto include `motion_person`, un detector a movimento pensato per persone in scena senza modelli esterni.
+   Detector dei performer. Il progetto include `motion_person` per prototipazione locale e uno scheletro `hailo_person` per Raspberry Pi 5 + AI HAT+.
 3. `pipeline.py`
    Tracking delle persone, sincronizzazione con audio, orchestrazione del rendering.
 4. `audio.py`
@@ -134,8 +134,28 @@ Il progetto e' preparato per sostituire il detector baseline con un detector acc
 In pratica:
 
 - usa questa base per preview, audio-reactive rendering e recording
-- inserisci un detector Hailo nel package `detectors/`
+- attiva `detector.type: hailo_person`
+- punta `detector.model_path` a un modello `.hef` compatibile
+- opzionalmente imposta `detector.labels_path` a un file class labels
 - mantieni invariati tracking, projection e recorder
+
+### Passaggio a Hailo sul Pi
+
+Quando ti arriva il Raspberry Pi 5 con AI HAT+ 26 TOPS:
+
+1. installa Raspberry Pi OS 64-bit aggiornato
+2. installa lo stack AI ufficiale Raspberry Pi / Hailo
+3. copia un modello person detection compatibile sul Pi
+4. usa il file `config/pi5.hailo.example.yaml` come base
+5. completa l'adapter in `src/aura_pi/detectors/hailo_person.py` in base al runtime Hailo installato
+
+Lo scheletro `HailoPersonDetector` e' gia' pronto per:
+
+- filtrare solo la label `person`
+- convertire bbox normalizzate o pixel
+- mantenere invariati tracker, aura e recorder
+
+In altre parole, il punto di innesto AI e' tutto concentrato li'.
 
 ## Note USB camera
 
