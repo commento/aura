@@ -160,6 +160,8 @@ class AuraPipeline:
             show_labels=config.render.show_labels,
             debug_boxes=config.render.debug_boxes,
             aura_enabled=config.render.aura_enabled,
+            audio_threshold=config.render.audio_threshold,
+            audio_scale=config.render.audio_scale,
         )
         self.recorder = None
         self.archive_recorder = None

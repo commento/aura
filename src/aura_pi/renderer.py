@@ -27,6 +27,8 @@ class AuraRenderer:
         show_labels: bool,
         debug_boxes: bool = False,
         aura_enabled: bool = True,
+        audio_threshold: float = 0.018,
+        audio_scale: float = 10.0,
     ):
         self.aura_radius = aura_radius
         self.aura_alpha = aura_alpha
@@ -35,6 +37,8 @@ class AuraRenderer:
         self.show_labels = show_labels
         self.debug_boxes = debug_boxes
         self.aura_enabled = aura_enabled
+        self.audio_threshold = audio_threshold
+        self.audio_scale = audio_scale
         self.trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=24))
 
     def render(self, frame: np.ndarray, performers: list[TrackedPerformer], audio: AudioFeatures) -> np.ndarray:
@@ -81,9 +85,7 @@ class AuraRenderer:
         )
 
     def _audio_gate(self, audio: AudioFeatures) -> float:
-        threshold = 0.018
-        scale = 10.0
-        gate = max(0.0, (audio.rms - threshold) * scale)
+        gate = max(0.0, (audio.rms - self.audio_threshold) * self.audio_scale)
         return min(1.0, gate)
 
     def _aura_tone(self, audio_gate: float) -> tuple[int, int, int]:

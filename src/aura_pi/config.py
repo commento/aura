@@ -55,6 +55,8 @@ class RenderConfig:
     show_labels: bool
     debug_boxes: bool = False
     aura_enabled: bool = True
+    audio_threshold: float = 0.018
+    audio_scale: float = 10.0
 
 
 @dataclass

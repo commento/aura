@@ -27,7 +27,7 @@ tracker:
   max_missing_frames: 12
 
 audio:
-  enabled: false
+  enabled: true
   device: default
   sample_rate: 48000
   block_size: 512
@@ -40,6 +40,8 @@ render:
   show_labels: false
   debug_boxes: true
   aura_enabled: false
+  audio_threshold: 0.004
+  audio_scale: 20.0
 
 recording:
   enabled: true
@@ -49,7 +51,7 @@ recording:
   pixel_format: yuv420p
   crf: 20
   preset: veryfast
-  audio_enabled: false
+  audio_enabled: true
   audio_input_format: alsa
   audio_input_device: default
 

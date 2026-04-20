@@ -40,6 +40,8 @@ render:
   show_labels: false
   debug_boxes: false
   aura_enabled: true
+  audio_threshold: 0.004
+  audio_scale: 20.0
 
 recording:
   enabled: true
@@ -56,4 +58,4 @@ recording:
 archive_recording:
   enabled: true
   output_path: output/archive_%Y%m%d_%H%M%S.mp4
-  audio_enabled: true
+  audio_enabled: false
