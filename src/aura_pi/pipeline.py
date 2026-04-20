@@ -241,13 +241,25 @@ class AuraPipeline:
             if self.recorder is not None:
                 self.recorder.close()
                 audio_path = None
-                if self.audio_recording_path is not None and self.config.recording.audio_enabled:
+                if (
+                    self.audio_recording_path is not None
+                    and self.config.recording.audio_enabled
+                    and self.audio.recorded_duration >= 0.5
+                ):
                     audio_path = str(self.audio_recording_path)
+                elif self.config.recording.audio_enabled and self.config.audio.enabled:
+                    print(
+                        "[Aura Pi] Audio realtime non rilevato o troppo breve; salvo il video senza audio."
+                    )
                 self.recorder.finalize(audio_path)
             if self.archive_recorder is not None:
                 self.archive_recorder.close()
                 archive_audio_path = None
-                if self.audio_recording_path is not None and self.config.archive_recording.audio_enabled:
+                if (
+                    self.audio_recording_path is not None
+                    and self.config.archive_recording.audio_enabled
+                    and self.audio.recorded_duration >= 0.5
+                ):
                     archive_audio_path = str(self.audio_recording_path)
                 self.archive_recorder.finalize(archive_audio_path)
             cv2.destroyAllWindows()

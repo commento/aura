@@ -31,6 +31,8 @@ class AudioAnalyzer:
         self._wave_file: wave.Wave_write | None = None
         self._record_queue: Queue[bytes] | None = None
         self._record_thread: Thread | None = None
+        self._recorded_frames = 0
+        self._stream_started = False
 
     def start(self) -> None:
         if sd is None:
@@ -45,6 +47,7 @@ class AudioAnalyzer:
             callback=self._callback,
         )
         self._stream.start()
+        self._stream_started = True
 
     def stop(self) -> None:
         if self._stream is not None:
@@ -68,6 +71,7 @@ class AudioAnalyzer:
         self._wave_file.setnchannels(1)
         self._wave_file.setsampwidth(2)
         self._wave_file.setframerate(self.sample_rate)
+        self._recorded_frames = 0
         self._record_queue = Queue(maxsize=64)
         self._record_thread = Thread(target=self._record_worker, daemon=True)
         self._record_thread.start()
@@ -98,6 +102,7 @@ class AudioAnalyzer:
             if self._record_queue is not None:
                 try:
                     self._record_queue.put_nowait(pcm16.tobytes())
+                    self._recorded_frames += int(samples.size)
                 except Exception:
                     pass
 
@@ -113,3 +118,11 @@ class AudioAnalyzer:
                 break
             if self._wave_file is not None:
                 self._wave_file.writeframes(chunk)
+
+    @property
+    def recorded_duration(self) -> float:
+        return self._recorded_frames / max(float(self.sample_rate), 1.0)
+
+    @property
+    def stream_started(self) -> bool:
+        return self._stream_started

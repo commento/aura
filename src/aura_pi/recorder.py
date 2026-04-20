@@ -177,7 +177,6 @@ class FfmpegRecorder:
             "aac",
             "-b:a",
             "192k",
-            "-shortest",
             str(muxed_tmp),
         ]
         try:
