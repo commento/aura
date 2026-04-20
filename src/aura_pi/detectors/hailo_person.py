@@ -197,8 +197,7 @@ class HailoPersonDetector:
         if array.ndim == 3:
             return self._parse_nms_list([array[class_id] for class_id in range(array.shape[0])])
         if array.ndim == 2 and array.shape[-1] >= 5:
-            label = self._output_label(info=info, fallback_name=fallback_name, class_id=0)
-            return self._parse_detection_rows(array, label=label)
+            return self._parse_detection_rows(array, info=info, fallback_name=fallback_name)
         return []
 
     def _parse_nms_list(self, per_class_outputs: list) -> list[dict]:
@@ -215,15 +214,18 @@ class HailoPersonDetector:
             detections.extend(self._parse_detection_rows(rows, label=label))
         return detections
 
-    def _parse_detection_rows(self, rows: np.ndarray, label: str) -> list[dict]:
+    def _parse_detection_rows(self, rows: np.ndarray, label: str | None = None, info=None, fallback_name: str = "output") -> list[dict]:
         detections: list[dict] = []
         for row in rows:
             if len(row) < 5:
                 continue
             x1, y1, x2, y2, score = self._decode_bbox_row(row)
+            class_id = self._row_class_id(row)
+            resolved_label = label or self._output_label(info=info, fallback_name=fallback_name, class_id=class_id)
             detections.append(
                 {
-                    "label": label,
+                    "label": resolved_label,
+                    "class_id": class_id,
                     "score": float(score),
                     "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
                 }
@@ -245,11 +247,20 @@ class HailoPersonDetector:
             return str(info.name)
         return fallback_name
 
+    def _row_class_id(self, row) -> int:
+        if len(row) < 6:
+            return 0
+        candidate = float(row[5])
+        rounded = int(round(candidate))
+        if abs(candidate - rounded) < 0.05 and rounded >= 0:
+            return rounded
+        return 0
+
     def _convert_predictions(self, predictions, frame_width: int, frame_height: int) -> list[Detection]:
         detections: list[Detection] = []
         for item in predictions or []:
             label = self._prediction_label(item)
-            if label != self.target_label:
+            if not self._is_target_label(label):
                 continue
 
             score = float(item.get("score", 0.0))
@@ -270,6 +281,13 @@ class HailoPersonDetector:
         if class_id is None:
             return self.target_label
         return self._labels.get(int(class_id), str(class_id))
+
+    def _is_target_label(self, label: str) -> bool:
+        normalized_target = self.target_label.strip().lower()
+        normalized_label = label.strip().lower()
+        if normalized_label == normalized_target:
+            return True
+        return normalized_target in normalized_label or normalized_label in normalized_target
 
     def _prediction_bbox(self, item: dict, frame_width: int, frame_height: int) -> tuple[int, int, int, int]:
         bbox = item.get("bbox", {})
