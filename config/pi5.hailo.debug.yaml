@@ -28,7 +28,7 @@ tracker:
 
 audio:
   enabled: true
-  device: default
+  device: 1
   sample_rate: 48000
   block_size: 512
 
