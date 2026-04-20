@@ -2,9 +2,9 @@ project:
   name: aura-pi
 
 video:
-  width: 1280
-  height: 720
-  fps: 25
+  width: 960
+  height: 540
+  fps: 20
   source: opencv
   device_index: 0
   fullscreen_preview: true
@@ -33,11 +33,13 @@ audio:
   block_size: 512
 
 render:
-  background_dim: 0.45
+  background_dim: 0.25
   aura_radius: 120
   aura_alpha: 0.58
   trail: false
   show_labels: false
+  debug_boxes: true
+  aura_enabled: false
 
 recording:
   enabled: true

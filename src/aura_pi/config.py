@@ -53,6 +53,8 @@ class RenderConfig:
     aura_alpha: float
     trail: bool
     show_labels: bool
+    debug_boxes: bool = False
+    aura_enabled: bool = True
 
 
 @dataclass

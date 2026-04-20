@@ -109,6 +109,8 @@ class AuraPipeline:
             background_dim=config.render.background_dim,
             trail=config.render.trail,
             show_labels=config.render.show_labels,
+            debug_boxes=config.render.debug_boxes,
+            aura_enabled=config.render.aura_enabled,
         )
         self.recorder = None
         self.archive_recorder = None

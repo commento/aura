@@ -18,23 +18,40 @@ class TrackedPerformer:
 
 
 class AuraRenderer:
-    def __init__(self, aura_radius: int, aura_alpha: float, background_dim: float, trail: bool, show_labels: bool):
+    def __init__(
+        self,
+        aura_radius: int,
+        aura_alpha: float,
+        background_dim: float,
+        trail: bool,
+        show_labels: bool,
+        debug_boxes: bool = False,
+        aura_enabled: bool = True,
+    ):
         self.aura_radius = aura_radius
         self.aura_alpha = aura_alpha
         self.background_dim = background_dim
         self.trail = trail
         self.show_labels = show_labels
+        self.debug_boxes = debug_boxes
+        self.aura_enabled = aura_enabled
         self.trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=24))
 
     def render(self, frame: np.ndarray, performers: list[TrackedPerformer], audio: AudioFeatures) -> np.ndarray:
         base = frame.copy()
+        if self.debug_boxes:
+            for performer in performers:
+                self.trails[performer.track_id].append(performer.center)
+                self._draw_debug_box(base, performer)
+            return base
+
         mist = np.zeros_like(frame)
         dimmed = cv2.convertScaleAbs(base, alpha=max(0.0, 1.0 - self.background_dim), beta=0)
         aura_level = self._audio_gate(audio)
 
         for performer in performers:
             self.trails[performer.track_id].append(performer.center)
-            if aura_level <= 0.0:
+            if not self.aura_enabled or aura_level <= 0.0:
                 continue
 
             tone = self._aura_tone(aura_level)
@@ -47,6 +64,21 @@ class AuraRenderer:
         mist = self._soft_blur(mist, sigma=16)
         composed = cv2.addWeighted(dimmed, 1.0, mist, self.aura_alpha * 0.78, 0.0)
         return composed
+
+    def _draw_debug_box(self, image: np.ndarray, performer: TrackedPerformer) -> None:
+        x, y, w, h = performer.bbox
+        color = (210, 210, 210)
+        cv2.rectangle(image, (x, y), (x + w, y + h), color, 2, cv2.LINE_AA)
+        cx, cy = performer.center
+        cv2.drawMarker(
+            image,
+            (int(cx), int(cy)),
+            (180, 180, 180),
+            markerType=cv2.MARKER_CROSS,
+            markerSize=14,
+            thickness=1,
+            line_type=cv2.LINE_AA,
+        )
 
     def _audio_gate(self, audio: AudioFeatures) -> float:
         threshold = 0.018
