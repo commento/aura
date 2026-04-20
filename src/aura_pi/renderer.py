@@ -40,6 +40,8 @@ class AuraRenderer:
         self.audio_threshold = audio_threshold
         self.audio_scale = audio_scale
         self.trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=24))
+        self.aura_states: dict[int, float] = defaultdict(float)
+        self.scene_energy = 0.0
 
     def render(self, frame: np.ndarray, performers: list[TrackedPerformer], audio: AudioFeatures) -> np.ndarray:
         base = frame.copy()
@@ -52,21 +54,40 @@ class AuraRenderer:
         mist = np.zeros_like(frame)
         dimmed = cv2.convertScaleAbs(base, alpha=max(0.0, 1.0 - self.background_dim), beta=0)
         aura_level = self._audio_gate(audio)
+        self.scene_energy = self._ease(self.scene_energy, aura_level, attack=0.06, release=0.018)
 
         for performer in performers:
             self.trails[performer.track_id].append(performer.center)
-            if not self.aura_enabled or aura_level <= 0.0:
+            if not self.aura_enabled:
                 continue
 
-            tone = self._aura_tone(aura_level)
-            energy = min(1.0, 0.2 + aura_level * 0.95 + audio.peak * 0.16)
-            radius = int(self.aura_radius * (0.9 + energy))
-            self._draw_ar_aura(mist, frame, performer, tone, radius, energy, aura_level)
-            if self.trail:
-                self._draw_whisper_trail(mist, performer.track_id, tone, aura_level)
+            match_strength = min(1.0, max(0.0, (performer.age - 1) / 10.0))
+            target_presence = self.scene_energy * match_strength
+            current_presence = self.aura_states[performer.track_id]
+            current_presence = self._ease(current_presence, target_presence, attack=0.08, release=0.03)
+            self.aura_states[performer.track_id] = current_presence
+            if current_presence <= 0.01:
+                continue
 
-        mist = self._soft_blur(mist, sigma=16)
-        composed = cv2.addWeighted(dimmed, 1.0, mist, self.aura_alpha * 0.78, 0.0)
+            tone = self._aura_tone(current_presence)
+            energy = min(1.0, 0.16 + current_presence * 0.92 + audio.peak * 0.08)
+            radius = int(self.aura_radius * (0.82 + energy * 0.9))
+            self._draw_ar_aura(mist, frame, performer, tone, radius, energy, current_presence)
+            if self.trail:
+                self._draw_whisper_trail(mist, performer.track_id, tone, current_presence)
+
+        active_track_ids = {performer.track_id for performer in performers}
+        for track_id in list(self.aura_states.keys()):
+            if track_id in active_track_ids:
+                continue
+            faded = self._ease(self.aura_states[track_id], 0.0, attack=0.0, release=0.04)
+            if faded <= 0.01:
+                del self.aura_states[track_id]
+            else:
+                self.aura_states[track_id] = faded
+
+        mist = self._soft_blur(mist, sigma=20)
+        composed = cv2.addWeighted(dimmed, 1.0, mist, self.aura_alpha * 0.66, 0.0)
         return composed
 
     def _draw_debug_box(self, image: np.ndarray, performer: TrackedPerformer) -> None:
@@ -85,12 +106,15 @@ class AuraRenderer:
         )
 
     def _audio_gate(self, audio: AudioFeatures) -> float:
-        gate = max(0.0, (audio.rms - self.audio_threshold) * self.audio_scale)
+        rms_energy = max(0.0, (audio.rms - self.audio_threshold) * self.audio_scale)
+        peak_energy = max(0.0, (audio.peak - self.audio_threshold * 1.1) * (self.audio_scale * 0.35))
+        gate = rms_energy * 0.85 + peak_energy * 0.15
         return min(1.0, gate)
 
     def _aura_tone(self, audio_gate: float) -> tuple[int, int, int]:
-        value = 156 + int(audio_gate * 20)
-        return (value, value, value)
+        blue_lift = int(audio_gate * 8)
+        base = 118 + int(audio_gate * 16)
+        return (base, min(150, base + 2), min(158, base + 6 + blue_lift))
 
     def _draw_ar_aura(
         self,
@@ -109,8 +133,8 @@ class AuraRenderer:
             self._draw_presence_fallback(image, performer, color, audio_gate)
             return
 
-        soft = tuple(min(168, int(channel * 0.8 + 4)) for channel in color)
-        faint = tuple(min(138, int(channel * 0.66 + 3)) for channel in color)
+        soft = tuple(min(150, int(channel * 0.84 + 2)) for channel in color)
+        faint = tuple(min(126, int(channel * 0.68 + 2)) for channel in color)
         roi_h, roi_w = edge_mask.shape[:2]
 
         upper_focus = np.zeros_like(edge_mask)
@@ -122,7 +146,7 @@ class AuraRenderer:
             self._draw_presence_fallback(image, performer, color, audio_gate)
             return
 
-        halo = cv2.dilate(edge_mask, np.ones((9, 9), np.uint8), iterations=1)
+        halo = cv2.dilate(edge_mask, np.ones((7, 7), np.uint8), iterations=1)
         halo = cv2.subtract(halo, edge_mask)
         self._apply_mask(image, halo, x0, y0, faint)
 
@@ -135,7 +159,7 @@ class AuraRenderer:
         bottom = min(roi_h, int(roi_h * 0.48))
         cv2.rectangle(shoulder_focus, (0, top), (roi_w, bottom), 255, -1)
         shoulder_glow = cv2.bitwise_and(halo, shoulder_focus)
-        shoulder_glow = cv2.dilate(shoulder_glow, np.ones((11, 11), np.uint8), iterations=1)
+        shoulder_glow = cv2.dilate(shoulder_glow, np.ones((9, 9), np.uint8), iterations=1)
         self._apply_mask(image, shoulder_glow, x0, y0, soft)
 
         head_center = (int(cx), max(0, int(y + h * 0.18)))
@@ -155,7 +179,7 @@ class AuraRenderer:
     ) -> None:
         x, y, w, h = performer.bbox
         cx, _ = performer.center
-        glow = tuple(min(172, int(channel * 0.9 + 6)) for channel in color)
+        glow = tuple(min(146, int(channel * 0.88 + 3)) for channel in color)
         shoulder_center = (int(cx), int(y + h * 0.32))
         shoulder_axes = (max(20, int(w * 0.42)), max(14, int(h * (0.14 + audio_gate * 0.05))))
         cv2.ellipse(image, shoulder_center, shoulder_axes, 0, 0, 360, glow, -1, cv2.LINE_AA)
@@ -225,3 +249,8 @@ class AuraRenderer:
         small = cv2.resize(image, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
         blurred = cv2.GaussianBlur(small, (0, 0), sigmaX=max(1.0, sigma / 2.0), sigmaY=max(1.0, sigma / 2.0))
         return cv2.resize(blurred, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LINEAR)
+
+    def _ease(self, current: float, target: float, attack: float, release: float) -> float:
+        if target > current:
+            return current + (target - current) * attack
+        return current + (target - current) * release
