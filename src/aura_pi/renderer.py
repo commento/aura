@@ -86,6 +86,7 @@ class AuraRenderer:
             else:
                 self.aura_states[track_id] = faded
 
+        self._draw_group_fusion(mist, performers)
         mist = self._soft_blur(mist, sigma=20)
         composed = cv2.addWeighted(dimmed, 1.0, mist, self.aura_alpha * 0.66, 0.0)
         return composed
@@ -146,12 +147,12 @@ class AuraRenderer:
             self._draw_presence_fallback(image, performer, color, audio_gate)
             return
 
-        halo = cv2.dilate(edge_mask, np.ones((7, 7), np.uint8), iterations=1)
+        halo = cv2.dilate(edge_mask, np.ones((9, 9), np.uint8), iterations=1)
         halo = cv2.subtract(halo, edge_mask)
         self._apply_mask(image, halo, x0, y0, faint)
 
-        contour = cv2.dilate(edge_mask, np.ones((5, 5), np.uint8), iterations=1)
-        contour = cv2.subtract(contour, cv2.erode(edge_mask, np.ones((3, 3), np.uint8), iterations=1))
+        contour = cv2.dilate(edge_mask, np.ones((3, 3), np.uint8), iterations=1)
+        contour = cv2.subtract(contour, cv2.erode(edge_mask, np.ones((2, 2), np.uint8), iterations=1))
         self._apply_mask(image, contour, x0, y0, soft)
 
         shoulder_focus = np.zeros_like(edge_mask)
@@ -170,6 +171,10 @@ class AuraRenderer:
         collar_axes = (max(16, int(w * 0.34)), max(8, int(h * 0.08)))
         cv2.ellipse(image, collar_center, collar_axes, 0, 0, 360, faint, -1, cv2.LINE_AA)
 
+        chest_center = (int(cx), int(y + h * 0.4))
+        chest_axes = (max(18, int(w * 0.24)), max(8, int(h * 0.06)))
+        cv2.ellipse(image, chest_center, chest_axes, 0, 0, 360, faint, -1, cv2.LINE_AA)
+
     def _draw_presence_fallback(
         self,
         image: np.ndarray,
@@ -187,6 +192,39 @@ class AuraRenderer:
         head_center = (int(cx), max(0, int(y + h * 0.18)))
         head_axes = (max(12, int(w * 0.15)), max(16, int(h * 0.16)))
         cv2.ellipse(image, head_center, head_axes, 0, 0, 360, glow, -1, cv2.LINE_AA)
+
+    def _draw_group_fusion(self, image: np.ndarray, performers: list[TrackedPerformer]) -> None:
+        if len(performers) < 2:
+            return
+
+        for index, performer in enumerate(performers):
+            presence_a = self.aura_states.get(performer.track_id, 0.0)
+            if presence_a <= 0.08:
+                continue
+            ax, ay = performer.center
+            for other in performers[index + 1:]:
+                presence_b = self.aura_states.get(other.track_id, 0.0)
+                if presence_b <= 0.08:
+                    continue
+                bx, by = other.center
+                distance = float(np.hypot(ax - bx, ay - by))
+                if distance > max(220.0, (performer.bbox[2] + other.bbox[2]) * 0.9):
+                    continue
+
+                shared = min(presence_a, presence_b)
+                fusion_strength = max(0.0, 1.0 - distance / 220.0) * shared
+                if fusion_strength <= 0.04:
+                    continue
+
+                mid_x = int((ax + bx) / 2)
+                shoulder_y = int(min(performer.bbox[1] + performer.bbox[3] * 0.3, other.bbox[1] + other.bbox[3] * 0.3))
+                axes = (
+                    max(24, int(distance * 0.32)),
+                    max(12, int((performer.bbox[3] + other.bbox[3]) * 0.06)),
+                )
+                tone = self._aura_tone(fusion_strength)
+                fusion_color = tuple(min(132, int(channel * 0.74)) for channel in tone)
+                cv2.ellipse(image, (mid_x, shoulder_y), axes, 0, 0, 360, fusion_color, -1, cv2.LINE_AA)
 
     def _draw_whisper_trail(self, image: np.ndarray, track_id: int, color: tuple[int, int, int], audio_gate: float) -> None:
         points = list(self.trails[track_id])

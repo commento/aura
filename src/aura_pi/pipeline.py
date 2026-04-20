@@ -235,6 +235,7 @@ class AuraPipeline:
         finally:
             self.video.stop()
             self.audio.stop()
+            cv2.destroyAllWindows()
             detector_close = getattr(self.detector, "close", None)
             if callable(detector_close):
                 detector_close()
@@ -262,7 +263,6 @@ class AuraPipeline:
                 ):
                     archive_audio_path = str(self.audio_recording_path)
                 self.archive_recorder.finalize(archive_audio_path)
-            cv2.destroyAllWindows()
 
     def _setup_window(self) -> None:
         cv2.namedWindow(self.config.video.window_name, cv2.WINDOW_NORMAL)
@@ -283,11 +283,12 @@ class AuraPipeline:
                 cv2.moveWindow(self.config.video.window_name, 0, 0)
             except cv2.error:
                 pass
-        cv2.resizeWindow(
-            self.config.video.window_name,
-            self.config.video.width,
-            self.config.video.height,
-        )
+        else:
+            cv2.resizeWindow(
+                self.config.video.window_name,
+                self.config.video.width,
+                self.config.video.height,
+            )
 
     def _build_detector(self):
         detector_type = self.config.detector.type
