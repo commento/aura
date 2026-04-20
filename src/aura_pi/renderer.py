@@ -316,19 +316,34 @@ class AuraRenderer:
         yy *= h / grid_h
         disp_x = np.zeros((grid_h, grid_w), dtype=np.float32)
         disp_y = np.zeros((grid_h, grid_w), dtype=np.float32)
+        world_center_x = w * 0.5
+        world_center_y = h * 0.5
 
         for performer, presence in active:
             x, y, bw, bh = performer.bbox
             cx = float(performer.center[0])
             shoulder_y = float(y + bh * 0.28)
-            head_y = float(y + bh * 0.16)
             local_strength = float(self.warp_strength) * presence
-            radius = max(36.0, bw * 0.9)
+            radius = max(w, h) * (0.38 + presence * 0.18)
 
-            disp_x += self._warp_component(xx, yy, cx, shoulder_y, radius, local_strength * 1.2)
-            disp_y += self._warp_component(yy, xx, shoulder_y, cx, radius * 0.72, local_strength * 0.8)
-            disp_x += self._warp_component(xx, yy, cx, head_y, radius * 0.55, local_strength * 0.7)
-            disp_y += self._warp_component(yy, xx, head_y, cx, radius * 0.48, local_strength * 0.45)
+            pull_x = self._warp_component(xx, yy, cx, shoulder_y, radius, local_strength * 0.9)
+            pull_y = self._warp_component(yy, xx, shoulder_y, cx, radius * 0.9, local_strength * 0.7)
+
+            vortex = self._warp_vortex(xx, yy, cx, shoulder_y, radius * 1.1, local_strength * 0.22)
+            disp_x += pull_x - vortex[1]
+            disp_y += pull_y + vortex[0]
+
+            drift_x = (cx - world_center_x) / max(world_center_x, 1.0)
+            drift_y = (shoulder_y - world_center_y) / max(world_center_y, 1.0)
+            field_falloff = np.exp(
+                -(
+                    ((xx - cx) ** 2 + (yy - shoulder_y) ** 2)
+                    / max(radius * radius, 1.0)
+                )
+                * 0.35
+            )
+            disp_x += drift_x * field_falloff * radius * local_strength * 0.05
+            disp_y += drift_y * field_falloff * radius * local_strength * 0.05
 
         map_x = cv2.resize(xx + disp_x, (w, h), interpolation=cv2.INTER_CUBIC)
         map_y = cv2.resize(yy + disp_y, (w, h), interpolation=cv2.INTER_CUBIC)
@@ -351,3 +366,21 @@ class AuraRenderer:
         falloff = np.exp(-((distance / max(radius, 1.0)) ** 2) * 1.8)
         direction = delta_primary / np.maximum(distance, 1.0)
         return -direction * falloff * radius * strength * 0.18
+
+    def _warp_vortex(
+        self,
+        xx: np.ndarray,
+        yy: np.ndarray,
+        center_x: float,
+        center_y: float,
+        radius: float,
+        strength: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        dx = xx - center_x
+        dy = yy - center_y
+        distance = np.sqrt(dx * dx + dy * dy)
+        falloff = np.exp(-((distance / max(radius, 1.0)) ** 2) * 1.2)
+        tangent_x = -dy / np.maximum(distance, 1.0)
+        tangent_y = dx / np.maximum(distance, 1.0)
+        amount = falloff * radius * strength * 0.12
+        return tangent_x * amount, tangent_y * amount
