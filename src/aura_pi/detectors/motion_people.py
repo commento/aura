@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 
@@ -15,9 +17,7 @@ class MotionPeopleDetector:
             varThreshold=var_threshold,
             detectShadows=False,
         )
-        self.face_detector = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
+        self.face_detector = self._load_face_detector()
         self.hog = cv2.HOGDescriptor()
         self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
@@ -51,12 +51,14 @@ class MotionPeopleDetector:
             return detections[:6]
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_detector.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(48, 48),
-        )
+        faces = []
+        if self.face_detector is not None:
+            faces = self.face_detector.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(48, 48),
+            )
         fallback: list[Detection] = []
         for fx, fy, fw, fh in faces[:4]:
             px = max(0, int(fx - fw * 0.9))
@@ -78,14 +80,15 @@ class MotionPeopleDetector:
             return False
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        faces = self.face_detector.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=4,
-            minSize=(36, 36),
-        )
-        if len(faces) > 0:
-            return True
+        if self.face_detector is not None:
+            faces = self.face_detector.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=4,
+                minSize=(36, 36),
+            )
+            if len(faces) > 0:
+                return True
 
         roi_height, roi_width = roi.shape[:2]
         if roi_height < 96 or roi_width < 48:
@@ -99,3 +102,30 @@ class MotionPeopleDetector:
             scale=1.05,
         )
         return len(rects) > 0
+
+    def _load_face_detector(self):
+        cascade_name = "haarcascade_frontalface_default.xml"
+        candidates: list[Path] = []
+
+        data_module = getattr(cv2, "data", None)
+        if data_module is not None:
+            haarcascades = getattr(data_module, "haarcascades", None)
+            if haarcascades:
+                candidates.append(Path(haarcascades) / cascade_name)
+
+        candidates.extend(
+            [
+                Path("/usr/share/opencv4/haarcascades") / cascade_name,
+                Path("/usr/share/opencv/haarcascades") / cascade_name,
+                Path("/usr/local/share/opencv4/haarcascades") / cascade_name,
+            ]
+        )
+
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            detector = cv2.CascadeClassifier(str(candidate))
+            if detector.empty():
+                continue
+            return detector
+        return None
