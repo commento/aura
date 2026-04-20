@@ -1,0 +1,59 @@
+project:
+  name: aura-pi
+
+video:
+  width: 640
+  height: 360
+  fps: 15
+  source: opencv
+  device_index: 0
+  fullscreen_preview: true
+  window_name: Aura Pi Debug
+
+detector:
+  type: hailo_person
+  min_area: 5000
+  history: 250
+  var_threshold: 64
+  learning_rate: 0.0001
+  score_threshold: 0.2
+  max_detections: 4
+  target_label: person
+  model_path: /home/commento/models/person_detection.hef
+  labels_path: /home/commento/models/coco.txt
+
+tracker:
+  max_distance: 110
+  max_missing_frames: 12
+
+audio:
+  enabled: false
+  device: default
+  sample_rate: 48000
+  block_size: 512
+
+render:
+  background_dim: 0.0
+  aura_radius: 100
+  aura_alpha: 0.55
+  trail: false
+  show_labels: false
+  debug_boxes: true
+  aura_enabled: false
+
+recording:
+  enabled: true
+  output_path: output/session_%Y%m%d_%H%M%S.mp4
+  ffmpeg_bin: ffmpeg
+  video_codec: libx264
+  pixel_format: yuv420p
+  crf: 20
+  preset: veryfast
+  audio_enabled: false
+  audio_input_format: alsa
+  audio_input_device: default
+
+archive_recording:
+  enabled: true
+  output_path: output/archive_%Y%m%d_%H%M%S.mp4
+  audio_enabled: false
