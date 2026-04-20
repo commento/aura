@@ -22,6 +22,7 @@ class TrackState:
     center: tuple[int, int]
     age: int = 0
     missing_frames: int = 0
+    hits: int = 1
 
 
 class PerformerTracker:
@@ -56,6 +57,7 @@ class PerformerTracker:
                 track.center = self._bbox_center(track.bbox)
                 track.age += 1
                 track.missing_frames = 0
+                track.hits += 1
                 assigned_tracks.add(best_track_id)
                 assigned_detections.add(det_index)
 
@@ -69,6 +71,7 @@ class PerformerTracker:
                 bbox=(detection.x, detection.y, detection.w, detection.h),
                 center=detection.center,
                 age=1,
+                hits=1,
             )
 
         for track_id in list(self._tracks.keys()):
@@ -85,7 +88,7 @@ class PerformerTracker:
                 age=track.age,
             )
             for track in self._tracks.values()
-            if track.missing_frames <= 2
+            if track.hits >= 2 and track.missing_frames <= min(self.max_missing_frames, 20)
         ]
 
     def _smooth_bbox(

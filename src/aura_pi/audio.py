@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import Lock
+from queue import Empty, Queue
+from threading import Lock, Thread
 import wave
 
 import numpy as np
@@ -28,6 +29,8 @@ class AudioAnalyzer:
         self._lock = Lock()
         self._stream = None
         self._wave_file: wave.Wave_write | None = None
+        self._record_queue: Queue[bytes] | None = None
+        self._record_thread: Thread | None = None
 
     def start(self) -> None:
         if sd is None:
@@ -48,6 +51,12 @@ class AudioAnalyzer:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        if self._record_thread is not None:
+            assert self._record_queue is not None
+            self._record_queue.put(b"")
+            self._record_thread.join(timeout=2)
+            self._record_thread = None
+            self._record_queue = None
         if self._wave_file is not None:
             self._wave_file.close()
             self._wave_file = None
@@ -59,6 +68,9 @@ class AudioAnalyzer:
         self._wave_file.setnchannels(1)
         self._wave_file.setsampwidth(2)
         self._wave_file.setframerate(self.sample_rate)
+        self._record_queue = Queue(maxsize=64)
+        self._record_thread = Thread(target=self._record_worker, daemon=True)
+        self._record_thread.start()
 
     def read(self) -> AudioFeatures:
         with self._lock:
@@ -83,4 +95,21 @@ class AudioAnalyzer:
         if self._wave_file is not None:
             pcm16 = np.clip(samples, -1.0, 1.0)
             pcm16 = (pcm16 * 32767.0).astype(np.int16)
-            self._wave_file.writeframes(pcm16.tobytes())
+            if self._record_queue is not None:
+                try:
+                    self._record_queue.put_nowait(pcm16.tobytes())
+                except Exception:
+                    pass
+
+    def _record_worker(self) -> None:
+        if self._record_queue is None:
+            return
+        while True:
+            try:
+                chunk = self._record_queue.get(timeout=0.2)
+            except Empty:
+                continue
+            if chunk == b"":
+                break
+            if self._wave_file is not None:
+                self._wave_file.writeframes(chunk)
