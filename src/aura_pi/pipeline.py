@@ -240,12 +240,16 @@ class AuraPipeline:
                 detector_close()
             if self.recorder is not None:
                 self.recorder.close()
-                if self.audio_recording_path is not None:
-                    self.recorder.mux_audio(str(self.audio_recording_path))
+                audio_path = None
+                if self.audio_recording_path is not None and self.config.recording.audio_enabled:
+                    audio_path = str(self.audio_recording_path)
+                self.recorder.finalize(audio_path)
             if self.archive_recorder is not None:
                 self.archive_recorder.close()
+                archive_audio_path = None
                 if self.audio_recording_path is not None and self.config.archive_recording.audio_enabled:
-                    self.archive_recorder.mux_audio(str(self.audio_recording_path))
+                    archive_audio_path = str(self.audio_recording_path)
+                self.archive_recorder.finalize(archive_audio_path)
             cv2.destroyAllWindows()
 
     def _setup_window(self) -> None:

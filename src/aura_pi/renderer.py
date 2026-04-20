@@ -106,6 +106,7 @@ class AuraRenderer:
         cx, cy = performer.center
         edge_mask, x0, y0 = self._person_edge_mask(frame, performer)
         if edge_mask is None:
+            self._draw_presence_fallback(image, performer, color, audio_gate)
             return
 
         soft = tuple(min(168, int(channel * 0.8 + 4)) for channel in color)
@@ -131,6 +132,24 @@ class AuraRenderer:
         head_center = (int(cx), max(0, int(y + h * 0.18)))
         head_axes = (max(12, int(radius * 0.12)), max(18, int(radius * 0.18)))
         cv2.ellipse(image, head_center, head_axes, 0, 0, 360, soft, -1, cv2.LINE_AA)
+
+    def _draw_presence_fallback(
+        self,
+        image: np.ndarray,
+        performer: TrackedPerformer,
+        color: tuple[int, int, int],
+        audio_gate: float,
+    ) -> None:
+        x, y, w, h = performer.bbox
+        cx, _ = performer.center
+        glow = tuple(min(172, int(channel * 0.9 + 6)) for channel in color)
+        shoulder_center = (int(cx), int(y + h * 0.34))
+        shoulder_axes = (max(18, int(w * 0.46)), max(14, int(h * (0.16 + audio_gate * 0.05))))
+        cv2.ellipse(image, shoulder_center, shoulder_axes, 0, 0, 360, glow, -1, cv2.LINE_AA)
+
+        head_center = (int(cx), max(0, int(y + h * 0.18)))
+        head_axes = (max(10, int(w * 0.16)), max(14, int(h * 0.16)))
+        cv2.ellipse(image, head_center, head_axes, 0, 0, 360, glow, -1, cv2.LINE_AA)
 
     def _draw_whisper_trail(self, image: np.ndarray, track_id: int, color: tuple[int, int, int], audio_gate: float) -> None:
         points = list(self.trails[track_id])
