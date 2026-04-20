@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import numpy as np
@@ -55,20 +56,31 @@ class HailoPersonDetector:
             self._init_error = "model_path mancante"
             return
 
-        # Placeholder for the most common deployment path on Raspberry Pi / Hailo.
-        # When the Hailo Python runtime is available on the Pi, replace this wiring
-        # with the installed package entrypoints for loading a HEF and invoking inference.
-        try:
-            import hailo_platform  # type: ignore  # pragma: no cover
-        except Exception:
+        runtime = self._import_runtime()
+        if runtime is None:
             self._runtime_name = "missing_hailo_runtime"
-            self._init_error = "runtime hailo_platform non disponibile"
             self._infer = None
+            self._init_error = (
+                "runtime Hailo non disponibile nell'ambiente Python corrente. "
+                "Sul Raspberry spesso i moduli sono installati a livello di sistema: "
+                "esegui senza venv oppure ricrea la venv con --system-site-packages."
+            )
             return
 
-        self._runtime_name = "hailo_platform"
-        self._infer = self._build_stub_infer(model_path=self.model_path, runtime=hailo_platform)
-        self._init_error = "adapter modello Hailo non ancora implementato"
+        self._infer = self._build_stub_infer(model_path=self.model_path, runtime=runtime)
+        self._init_error = (
+            f"adapter modello Hailo non ancora implementato per runtime {self._runtime_name}"
+        )
+
+    def _import_runtime(self):
+        for module_name in ("hailo_platform", "hailo", "gsthailo"):
+            try:
+                runtime = importlib.import_module(module_name)
+            except Exception:
+                continue
+            self._runtime_name = module_name
+            return runtime
+        return None
 
     def _build_stub_infer(self, model_path: Path, runtime) :
         def _not_implemented(frame: np.ndarray):
