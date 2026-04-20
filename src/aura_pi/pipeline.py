@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from math import hypot
 from pathlib import Path
 import platform
+import subprocess
 
 import cv2
+import numpy as np
 
 from .audio import AudioAnalyzer, AudioFeatures
 from .config import AppConfig
@@ -142,6 +144,7 @@ class AuraPipeline:
             source=config.video.source,
             device_index=config.video.device_index,
         )
+        self._display_size = self._detect_display_size() if config.video.fullscreen_preview else None
         self.detector = self._build_detector()
         self.tracker = PerformerTracker(
             max_distance=config.tracker.max_distance,
@@ -225,7 +228,7 @@ class AuraPipeline:
                 if self.archive_recorder is not None and packet is not None and not paused:
                     self.archive_recorder.write(packet.frame)
 
-                cv2.imshow(self.config.video.window_name, last_output)
+                cv2.imshow(self.config.video.window_name, self._prepare_preview(last_output))
 
                 key = cv2.waitKey(30 if paused else 1) & 0xFF
                 if key in (27, ord("q"), ord("s")):
@@ -266,11 +269,11 @@ class AuraPipeline:
 
     def _setup_window(self) -> None:
         cv2.namedWindow(self.config.video.window_name, cv2.WINDOW_NORMAL)
-        if hasattr(cv2, "WND_PROP_ASPECT_RATIO") and hasattr(cv2, "WINDOW_FREERATIO"):
+        if hasattr(cv2, "WND_PROP_ASPECT_RATIO") and hasattr(cv2, "WINDOW_KEEPRATIO"):
             cv2.setWindowProperty(
                 self.config.video.window_name,
                 cv2.WND_PROP_ASPECT_RATIO,
-                cv2.WINDOW_FREERATIO,
+                cv2.WINDOW_KEEPRATIO,
             )
         use_native_fullscreen = self.config.video.fullscreen_preview and platform.system() != "Darwin"
         if use_native_fullscreen:
@@ -289,6 +292,53 @@ class AuraPipeline:
                 self.config.video.width,
                 self.config.video.height,
             )
+
+    def _prepare_preview(self, frame):
+        if not self.config.video.fullscreen_preview or self._display_size is None:
+            return frame
+        display_w, display_h = self._display_size
+        frame_h, frame_w = frame.shape[:2]
+        if frame_w <= 0 or frame_h <= 0:
+            return frame
+
+        scale = min(display_w / frame_w, display_h / frame_h)
+        out_w = max(1, int(frame_w * scale))
+        out_h = max(1, int(frame_h * scale))
+        resized = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+        canvas = np.zeros((display_h, display_w, 3), dtype=frame.dtype)
+        offset_x = max(0, (display_w - out_w) // 2)
+        offset_y = max(0, (display_h - out_h) // 2)
+        canvas[offset_y:offset_y + out_h, offset_x:offset_x + out_w] = resized
+        return canvas
+
+    def _detect_display_size(self) -> tuple[int, int] | None:
+        if platform.system() != "Linux":
+            return None
+        try:
+            result = subprocess.run(
+                ["xrandr", "--current"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except Exception:
+            return None
+
+        for line in result.stdout.splitlines():
+            if "*" not in line:
+                continue
+            parts = line.strip().split()
+            if not parts:
+                continue
+            mode = parts[0]
+            if "x" not in mode:
+                continue
+            width_text, height_text = mode.split("x", 1)
+            try:
+                return int(width_text), int(height_text)
+            except ValueError:
+                continue
+        return None
 
     def _build_detector(self):
         detector_type = self.config.detector.type
