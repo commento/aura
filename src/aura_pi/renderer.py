@@ -314,73 +314,47 @@ class AuraRenderer:
         yy, xx = np.mgrid[0:grid_h, 0:grid_w].astype(np.float32)
         xx *= w / grid_w
         yy *= h / grid_h
-        disp_x = np.zeros((grid_h, grid_w), dtype=np.float32)
-        disp_y = np.zeros((grid_h, grid_w), dtype=np.float32)
-        world_center_x = w * 0.5
-        world_center_y = h * 0.5
-
-        for performer, presence in active:
-            x, y, bw, bh = performer.bbox
-            cx = float(performer.center[0])
-            shoulder_y = float(y + bh * 0.28)
-            local_strength = float(self.warp_strength) * presence
-            radius = max(w, h) * (0.38 + presence * 0.18)
-
-            pull_x = self._warp_component(xx, yy, cx, shoulder_y, radius, local_strength * 0.9)
-            pull_y = self._warp_component(yy, xx, shoulder_y, cx, radius * 0.9, local_strength * 0.7)
-
-            vortex = self._warp_vortex(xx, yy, cx, shoulder_y, radius * 1.1, local_strength * 0.22)
-            disp_x += pull_x - vortex[1]
-            disp_y += pull_y + vortex[0]
-
-            drift_x = (cx - world_center_x) / max(world_center_x, 1.0)
-            drift_y = (shoulder_y - world_center_y) / max(world_center_y, 1.0)
-            field_falloff = np.exp(
-                -(
-                    ((xx - cx) ** 2 + (yy - shoulder_y) ** 2)
-                    / max(radius * radius, 1.0)
-                )
-                * 0.35
+        scene_presence = float(
+            np.clip(
+                np.mean([presence for _, presence in active]) if active else 0.0,
+                0.0,
+                1.0,
             )
-            disp_x += drift_x * field_falloff * radius * local_strength * 0.05
-            disp_y += drift_y * field_falloff * radius * local_strength * 0.05
+        )
 
-        map_x = cv2.resize(xx + disp_x, (w, h), interpolation=cv2.INTER_CUBIC)
-        map_y = cv2.resize(yy + disp_y, (w, h), interpolation=cv2.INTER_CUBIC)
+        center_x = w * 0.5
+        center_y = h * 0.5
+        if active:
+            weighted_x = 0.0
+            weighted_y = 0.0
+            total = 0.0
+            for performer, presence in active:
+                px, py = performer.center
+                weighted_x += px * presence
+                weighted_y += (performer.bbox[1] + performer.bbox[3] * 0.28) * presence
+                total += presence
+            if total > 0.0:
+                target_x = weighted_x / total
+                target_y = weighted_y / total
+                center_x = center_x * 0.82 + target_x * 0.18
+                center_y = center_y * 0.82 + target_y * 0.18
+
+        norm_x = (xx - center_x) / max(w * 0.5, 1.0)
+        norm_y = (yy - center_y) / max(h * 0.5, 1.0)
+        radius = np.sqrt(norm_x * norm_x + norm_y * norm_y)
+        edge_falloff = np.clip((radius - 0.22) / 0.95, 0.0, 1.0)
+
+        fisheye_strength = float(self.warp_strength) * (0.35 + scene_presence * 0.65)
+        stretch = 1.0 + edge_falloff * edge_falloff * fisheye_strength * 0.22
+        map_x_small = center_x + norm_x * stretch * (w * 0.5)
+        map_y_small = center_y + norm_y * stretch * (h * 0.5)
+
+        swirl = edge_falloff * edge_falloff * fisheye_strength * 0.015
+        map_x_small += -norm_y * swirl * w
+        map_y_small += norm_x * swirl * h
+
+        map_x = cv2.resize(map_x_small, (w, h), interpolation=cv2.INTER_CUBIC)
+        map_y = cv2.resize(map_y_small, (w, h), interpolation=cv2.INTER_CUBIC)
         map_x = np.clip(map_x, 0, w - 1).astype(np.float32)
         map_y = np.clip(map_y, 0, h - 1).astype(np.float32)
         return cv2.remap(frame, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
-
-    def _warp_component(
-        self,
-        primary_grid: np.ndarray,
-        secondary_grid: np.ndarray,
-        center_primary: float,
-        center_secondary: float,
-        radius: float,
-        strength: float,
-    ) -> np.ndarray:
-        delta_primary = primary_grid - center_primary
-        delta_secondary = secondary_grid - center_secondary
-        distance = np.sqrt(delta_primary * delta_primary + delta_secondary * delta_secondary)
-        falloff = np.exp(-((distance / max(radius, 1.0)) ** 2) * 1.8)
-        direction = delta_primary / np.maximum(distance, 1.0)
-        return -direction * falloff * radius * strength * 0.18
-
-    def _warp_vortex(
-        self,
-        xx: np.ndarray,
-        yy: np.ndarray,
-        center_x: float,
-        center_y: float,
-        radius: float,
-        strength: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        dx = xx - center_x
-        dy = yy - center_y
-        distance = np.sqrt(dx * dx + dy * dy)
-        falloff = np.exp(-((distance / max(radius, 1.0)) ** 2) * 1.2)
-        tangent_x = -dy / np.maximum(distance, 1.0)
-        tangent_y = dx / np.maximum(distance, 1.0)
-        amount = falloff * radius * strength * 0.12
-        return tangent_x * amount, tangent_y * amount
