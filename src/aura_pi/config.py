@@ -57,6 +57,8 @@ class RenderConfig:
     aura_enabled: bool = True
     audio_threshold: float = 0.018
     audio_scale: float = 10.0
+    space_warp: bool = False
+    warp_strength: float = 0.0
 
 
 @dataclass

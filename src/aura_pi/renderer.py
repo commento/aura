@@ -29,6 +29,8 @@ class AuraRenderer:
         aura_enabled: bool = True,
         audio_threshold: float = 0.018,
         audio_scale: float = 10.0,
+        space_warp: bool = False,
+        warp_strength: float = 0.0,
     ):
         self.aura_radius = aura_radius
         self.aura_alpha = aura_alpha
@@ -39,6 +41,8 @@ class AuraRenderer:
         self.aura_enabled = aura_enabled
         self.audio_threshold = audio_threshold
         self.audio_scale = audio_scale
+        self.space_warp = space_warp
+        self.warp_strength = warp_strength
         self.trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=24))
         self.aura_states: dict[int, float] = defaultdict(float)
         self.scene_energy = 0.0
@@ -88,7 +92,8 @@ class AuraRenderer:
 
         self._draw_group_fusion(mist, performers)
         mist = self._soft_blur(mist, sigma=20)
-        composed = cv2.addWeighted(dimmed, 1.0, mist, self.aura_alpha * 0.66, 0.0)
+        warped = self._apply_space_warp(dimmed, performers) if self.space_warp and self.warp_strength > 0.0 else dimmed
+        composed = cv2.addWeighted(warped, 1.0, mist, self.aura_alpha * 0.66, 0.0)
         return composed
 
     def _draw_debug_box(self, image: np.ndarray, performer: TrackedPerformer) -> None:
@@ -292,3 +297,57 @@ class AuraRenderer:
         if target > current:
             return current + (target - current) * attack
         return current + (target - current) * release
+
+    def _apply_space_warp(self, frame: np.ndarray, performers: list[TrackedPerformer]) -> np.ndarray:
+        active = [
+            (performer, self.aura_states.get(performer.track_id, 0.0))
+            for performer in performers
+            if self.aura_states.get(performer.track_id, 0.0) > 0.04
+        ]
+        if not active:
+            return frame
+
+        h, w = frame.shape[:2]
+        scale = 0.25
+        grid_w = max(8, int(w * scale))
+        grid_h = max(8, int(h * scale))
+        yy, xx = np.mgrid[0:grid_h, 0:grid_w].astype(np.float32)
+        xx *= w / grid_w
+        yy *= h / grid_h
+        disp_x = np.zeros((grid_h, grid_w), dtype=np.float32)
+        disp_y = np.zeros((grid_h, grid_w), dtype=np.float32)
+
+        for performer, presence in active:
+            x, y, bw, bh = performer.bbox
+            cx = float(performer.center[0])
+            shoulder_y = float(y + bh * 0.28)
+            head_y = float(y + bh * 0.16)
+            local_strength = float(self.warp_strength) * presence
+            radius = max(36.0, bw * 0.9)
+
+            disp_x += self._warp_component(xx, yy, cx, shoulder_y, radius, local_strength * 1.2)
+            disp_y += self._warp_component(yy, xx, shoulder_y, cx, radius * 0.72, local_strength * 0.8)
+            disp_x += self._warp_component(xx, yy, cx, head_y, radius * 0.55, local_strength * 0.7)
+            disp_y += self._warp_component(yy, xx, head_y, cx, radius * 0.48, local_strength * 0.45)
+
+        map_x = cv2.resize(xx + disp_x, (w, h), interpolation=cv2.INTER_CUBIC)
+        map_y = cv2.resize(yy + disp_y, (w, h), interpolation=cv2.INTER_CUBIC)
+        map_x = np.clip(map_x, 0, w - 1).astype(np.float32)
+        map_y = np.clip(map_y, 0, h - 1).astype(np.float32)
+        return cv2.remap(frame, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+
+    def _warp_component(
+        self,
+        primary_grid: np.ndarray,
+        secondary_grid: np.ndarray,
+        center_primary: float,
+        center_secondary: float,
+        radius: float,
+        strength: float,
+    ) -> np.ndarray:
+        delta_primary = primary_grid - center_primary
+        delta_secondary = secondary_grid - center_secondary
+        distance = np.sqrt(delta_primary * delta_primary + delta_secondary * delta_secondary)
+        falloff = np.exp(-((distance / max(radius, 1.0)) ** 2) * 1.8)
+        direction = delta_primary / np.maximum(distance, 1.0)
+        return -direction * falloff * radius * strength * 0.18

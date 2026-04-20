@@ -165,6 +165,8 @@ class AuraPipeline:
             aura_enabled=config.render.aura_enabled,
             audio_threshold=config.render.audio_threshold,
             audio_scale=config.render.audio_scale,
+            space_warp=config.render.space_warp,
+            warp_strength=config.render.warp_strength,
         )
         self.recorder = None
         self.archive_recorder = None

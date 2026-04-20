@@ -42,6 +42,8 @@ render:
   aura_enabled: true
   audio_threshold: 0.004
   audio_scale: 20.0
+  space_warp: true
+  warp_strength: 0.65
 
 recording:
   enabled: true
