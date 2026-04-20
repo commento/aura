@@ -58,4 +58,4 @@ recording:
 archive_recording:
   enabled: true
   output_path: output/archive_%Y%m%d_%H%M%S.mp4
-  audio_enabled: false
+  audio_enabled: true

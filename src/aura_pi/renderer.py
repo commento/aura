@@ -111,6 +111,16 @@ class AuraRenderer:
 
         soft = tuple(min(168, int(channel * 0.8 + 4)) for channel in color)
         faint = tuple(min(138, int(channel * 0.66 + 3)) for channel in color)
+        roi_h, roi_w = edge_mask.shape[:2]
+
+        upper_focus = np.zeros_like(edge_mask)
+        upper_top = max(0, int(roi_h * 0.04))
+        upper_bottom = min(roi_h, int(roi_h * 0.56))
+        cv2.rectangle(upper_focus, (0, upper_top), (roi_w, upper_bottom), 255, -1)
+        edge_mask = cv2.bitwise_and(edge_mask, upper_focus)
+        if cv2.countNonZero(edge_mask) == 0:
+            self._draw_presence_fallback(image, performer, color, audio_gate)
+            return
 
         halo = cv2.dilate(edge_mask, np.ones((9, 9), np.uint8), iterations=1)
         halo = cv2.subtract(halo, edge_mask)
@@ -120,18 +130,21 @@ class AuraRenderer:
         contour = cv2.subtract(contour, cv2.erode(edge_mask, np.ones((3, 3), np.uint8), iterations=1))
         self._apply_mask(image, contour, x0, y0, soft)
 
-        roi_h, roi_w = edge_mask.shape[:2]
         shoulder_focus = np.zeros_like(edge_mask)
-        top = max(0, int(roi_h * 0.08))
-        bottom = min(roi_h, int(roi_h * 0.42))
+        top = max(0, int(roi_h * 0.12))
+        bottom = min(roi_h, int(roi_h * 0.48))
         cv2.rectangle(shoulder_focus, (0, top), (roi_w, bottom), 255, -1)
         shoulder_glow = cv2.bitwise_and(halo, shoulder_focus)
-        shoulder_glow = cv2.dilate(shoulder_glow, np.ones((7, 7), np.uint8), iterations=1)
-        self._apply_mask(image, shoulder_glow, x0, y0, color)
+        shoulder_glow = cv2.dilate(shoulder_glow, np.ones((11, 11), np.uint8), iterations=1)
+        self._apply_mask(image, shoulder_glow, x0, y0, soft)
 
         head_center = (int(cx), max(0, int(y + h * 0.18)))
-        head_axes = (max(12, int(radius * 0.12)), max(18, int(radius * 0.18)))
+        head_axes = (max(14, int(radius * 0.14)), max(20, int(radius * 0.2)))
         cv2.ellipse(image, head_center, head_axes, 0, 0, 360, soft, -1, cv2.LINE_AA)
+
+        collar_center = (int(cx), int(y + h * 0.32))
+        collar_axes = (max(16, int(w * 0.34)), max(8, int(h * 0.08)))
+        cv2.ellipse(image, collar_center, collar_axes, 0, 0, 360, faint, -1, cv2.LINE_AA)
 
     def _draw_presence_fallback(
         self,
@@ -143,12 +156,12 @@ class AuraRenderer:
         x, y, w, h = performer.bbox
         cx, _ = performer.center
         glow = tuple(min(172, int(channel * 0.9 + 6)) for channel in color)
-        shoulder_center = (int(cx), int(y + h * 0.34))
-        shoulder_axes = (max(18, int(w * 0.46)), max(14, int(h * (0.16 + audio_gate * 0.05))))
+        shoulder_center = (int(cx), int(y + h * 0.32))
+        shoulder_axes = (max(20, int(w * 0.42)), max(14, int(h * (0.14 + audio_gate * 0.05))))
         cv2.ellipse(image, shoulder_center, shoulder_axes, 0, 0, 360, glow, -1, cv2.LINE_AA)
 
         head_center = (int(cx), max(0, int(y + h * 0.18)))
-        head_axes = (max(10, int(w * 0.16)), max(14, int(h * 0.16)))
+        head_axes = (max(12, int(w * 0.15)), max(16, int(h * 0.16)))
         cv2.ellipse(image, head_center, head_axes, 0, 0, 360, glow, -1, cv2.LINE_AA)
 
     def _draw_whisper_trail(self, image: np.ndarray, track_id: int, color: tuple[int, int, int], audio_gate: float) -> None:
