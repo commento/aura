@@ -45,3 +45,8 @@ recording:
   audio_enabled: true
   audio_input_format: avfoundation
   audio_input_device: 0
+
+archive_recording:
+  enabled: true
+  output_path: output/archive_%Y%m%d_%H%M%S.mp4
+  audio_enabled: true

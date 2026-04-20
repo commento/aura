@@ -111,6 +111,7 @@ class AuraPipeline:
             show_labels=config.render.show_labels,
         )
         self.recorder = None
+        self.archive_recorder = None
         self.audio_recording_path: Path | None = None
         if config.recording.enabled:
             self.recorder = FfmpegRecorder(
@@ -127,8 +128,24 @@ class AuraPipeline:
                 audio_input_format=config.recording.audio_input_format,
                 audio_input_device=config.recording.audio_input_device,
             )
-            if config.audio.enabled:
-                self.audio_recording_path = self.recorder.output_file.with_suffix(".wav")
+        if config.archive_recording.enabled:
+            self.archive_recorder = FfmpegRecorder(
+                ffmpeg_bin=config.recording.ffmpeg_bin,
+                output_path=config.archive_recording.output_path,
+                width=config.video.width,
+                height=config.video.height,
+                fps=config.video.fps,
+                video_codec=config.recording.video_codec,
+                pixel_format=config.recording.pixel_format,
+                crf=config.recording.crf,
+                preset=config.recording.preset,
+                audio_enabled=config.archive_recording.audio_enabled,
+                audio_input_format=config.recording.audio_input_format,
+                audio_input_device=config.recording.audio_input_device,
+            )
+        if config.audio.enabled and (self.recorder is not None or self.archive_recorder is not None):
+            base_output = self.recorder.output_file if self.recorder is not None else self.archive_recorder.output_file
+            self.audio_recording_path = base_output.with_suffix(".wav")
 
     def run(self) -> None:
         self.video.start()
@@ -142,6 +159,7 @@ class AuraPipeline:
 
         try:
             while True:
+                packet = None
                 if not paused or last_output is None:
                     packet = self.video.read()
                     detections = self.detector.detect(packet.frame)
@@ -151,6 +169,8 @@ class AuraPipeline:
 
                 if self.recorder is not None and last_output is not None and not paused:
                     self.recorder.write(last_output)
+                if self.archive_recorder is not None and packet is not None and not paused:
+                    self.archive_recorder.write(packet.frame)
 
                 cv2.imshow(self.config.video.window_name, last_output)
 
@@ -166,6 +186,10 @@ class AuraPipeline:
                 self.recorder.close()
                 if self.audio_recording_path is not None:
                     self.recorder.mux_audio(str(self.audio_recording_path))
+            if self.archive_recorder is not None:
+                self.archive_recorder.close()
+                if self.audio_recording_path is not None and self.config.archive_recording.audio_enabled:
+                    self.archive_recorder.mux_audio(str(self.audio_recording_path))
             cv2.destroyAllWindows()
 
     def _setup_window(self) -> None:
@@ -203,11 +227,23 @@ class AuraPipeline:
                 learning_rate=self.config.detector.learning_rate,
             )
         if detector_type in {"hailo", "hailo_person"}:
-            return HailoPersonDetector(
+            hailo_detector = HailoPersonDetector(
                 model_path=self.config.detector.model_path,
                 labels_path=self.config.detector.labels_path,
                 score_threshold=self.config.detector.score_threshold,
                 max_detections=self.config.detector.max_detections,
                 target_label=self.config.detector.target_label,
+            )
+            if hailo_detector.is_ready:
+                return hailo_detector
+            print(
+                "[Aura Pi] Hailo detector non pronto, fallback a motion_person:",
+                hailo_detector.init_error or "motivo sconosciuto",
+            )
+            return MotionPeopleDetector(
+                min_area=self.config.detector.min_area,
+                history=self.config.detector.history,
+                var_threshold=self.config.detector.var_threshold,
+                learning_rate=self.config.detector.learning_rate,
             )
         raise ValueError(f"Detector non supportato: {detector_type}")

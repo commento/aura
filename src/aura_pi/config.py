@@ -70,6 +70,13 @@ class RecordingConfig:
 
 
 @dataclass
+class ArchiveRecordingConfig:
+    enabled: bool = False
+    output_path: str = "output/archive_%Y%m%d_%H%M%S.mp4"
+    audio_enabled: bool = True
+
+
+@dataclass
 class AppConfig:
     project: dict[str, Any]
     video: VideoConfig
@@ -78,6 +85,7 @@ class AppConfig:
     audio: AudioConfig
     render: RenderConfig
     recording: RecordingConfig
+    archive_recording: ArchiveRecordingConfig
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -88,6 +96,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 def load_config(path: str | Path) -> AppConfig:
     raw = _read_yaml(Path(path))
     detector_raw = raw["detector"]
+    archive_raw = raw.get("archive_recording", {})
     return AppConfig(
         project=raw.get("project", {}),
         video=VideoConfig(**raw["video"]),
@@ -107,4 +116,9 @@ def load_config(path: str | Path) -> AppConfig:
         audio=AudioConfig(**raw["audio"]),
         render=RenderConfig(**raw["render"]),
         recording=RecordingConfig(**raw["recording"]),
+        archive_recording=ArchiveRecordingConfig(
+            enabled=archive_raw.get("enabled", False),
+            output_path=archive_raw.get("output_path", "output/archive_%Y%m%d_%H%M%S.mp4"),
+            audio_enabled=archive_raw.get("audio_enabled", True),
+        ),
     )

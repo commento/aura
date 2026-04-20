@@ -140,6 +140,8 @@ class FfmpegRecorder:
 
     def mux_audio(self, audio_path: str) -> None:
         audio_file = Path(audio_path)
+        if not self.video_only_file.exists() or self.video_only_file.stat().st_size == 0:
+            return
         if not audio_file.exists() or audio_file.stat().st_size == 0:
             self.video_only_file.replace(self.output_file)
             return
@@ -165,7 +167,13 @@ class FfmpegRecorder:
             "-shortest",
             str(muxed_tmp),
         ]
-        subprocess.run(command, check=True)
+        try:
+            subprocess.run(command, check=True)
+        except subprocess.CalledProcessError:
+            # Fall back to the silent video instead of crashing the whole app on teardown.
+            if self.video_only_file.exists():
+                self.video_only_file.replace(self.output_file)
+            return
         muxed_tmp.replace(self.output_file)
         if self.video_only_file.exists():
             self.video_only_file.unlink()

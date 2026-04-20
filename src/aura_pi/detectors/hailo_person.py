@@ -34,6 +34,7 @@ class HailoPersonDetector:
         self.target_label = target_label
         self._runtime_name = "unconfigured"
         self._infer = None
+        self._init_error: str | None = None
         self._labels = self._load_labels(self.labels_path)
         self._init_runtime()
 
@@ -51,6 +52,7 @@ class HailoPersonDetector:
 
     def _init_runtime(self) -> None:
         if self.model_path is None:
+            self._init_error = "model_path mancante"
             return
 
         # Placeholder for the most common deployment path on Raspberry Pi / Hailo.
@@ -60,11 +62,13 @@ class HailoPersonDetector:
             import hailo_platform  # type: ignore  # pragma: no cover
         except Exception:
             self._runtime_name = "missing_hailo_runtime"
+            self._init_error = "runtime hailo_platform non disponibile"
             self._infer = None
             return
 
         self._runtime_name = "hailo_platform"
         self._infer = self._build_stub_infer(model_path=self.model_path, runtime=hailo_platform)
+        self._init_error = "adapter modello Hailo non ancora implementato"
 
     def _build_stub_infer(self, model_path: Path, runtime) :
         def _not_implemented(frame: np.ndarray):
@@ -136,3 +140,11 @@ class HailoPersonDetector:
             else:
                 labels[index] = line
         return labels
+
+    @property
+    def is_ready(self) -> bool:
+        return self._infer is not None
+
+    @property
+    def init_error(self) -> str | None:
+        return self._init_error
