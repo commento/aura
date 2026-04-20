@@ -182,6 +182,9 @@ class AuraPipeline:
         finally:
             self.video.stop()
             self.audio.stop()
+            detector_close = getattr(self.detector, "close", None)
+            if callable(detector_close):
+                detector_close()
             if self.recorder is not None:
                 self.recorder.close()
                 if self.audio_recording_path is not None:

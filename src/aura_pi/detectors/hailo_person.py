@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from .base import Detection
@@ -37,6 +38,7 @@ class HailoPersonDetector:
         self._infer = None
         self._init_error: str | None = None
         self._labels = self._load_labels(self.labels_path)
+        self._resources: list[object] = []
         self._init_runtime()
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -67,10 +69,12 @@ class HailoPersonDetector:
             )
             return
 
-        self._infer = self._build_stub_infer(model_path=self.model_path, runtime=runtime)
-        self._init_error = (
-            f"adapter modello Hailo non ancora implementato per runtime {self._runtime_name}"
-        )
+        self._infer = self._build_runtime_infer(model_path=self.model_path, runtime=runtime)
+        if self._infer is None:
+            self._init_error = (
+                f"runtime {self._runtime_name} rilevato ma adapter modello non ancora "
+                f"implementato per {self.model_path.name}"
+            )
 
     def _import_runtime(self):
         for module_name in ("hailo_platform", "hailo", "gsthailo"):
@@ -82,14 +86,164 @@ class HailoPersonDetector:
             return runtime
         return None
 
-    def _build_stub_infer(self, model_path: Path, runtime) :
-        def _not_implemented(frame: np.ndarray):
-            raise NotImplementedError(
-                "Rilevato runtime Hailo ma l'adapter specifico del modello non e' ancora "
-                f"implementato per {model_path.name}. Completa questo metodo sul Raspberry Pi."
+    def _build_runtime_infer(self, model_path: Path, runtime):
+        if self._runtime_name != "hailo_platform":
+            return None
+
+        try:
+            hef = runtime.HEF(str(model_path))
+            vdevice = runtime.VDevice()
+            configure_params = runtime.ConfigureParams.create_from_hef(
+                hef,
+                interface=runtime.HailoStreamInterface.PCIe,
+            )
+            network_group = vdevice.configure(hef, configure_params)[0]
+            network_group_params = network_group.create_params()
+
+            input_params_factory = getattr(runtime.InputVStreamParams, "make_from_network_group", None)
+            if input_params_factory is None:
+                input_params_factory = runtime.InputVStreamParams.make
+            output_params_factory = getattr(runtime.OutputVStreamParams, "make_from_network_group", None)
+            if output_params_factory is None:
+                output_params_factory = runtime.OutputVStreamParams.make
+
+            input_vstream_params = input_params_factory(
+                network_group,
+                quantized=False,
+                format_type=runtime.FormatType.UINT8,
+            )
+            output_vstream_params = output_params_factory(
+                network_group,
+                quantized=False,
+                format_type=runtime.FormatType.FLOAT32,
             )
 
-        return _not_implemented
+            input_info = hef.get_input_vstream_infos()[0]
+            output_infos = list(hef.get_output_vstream_infos())
+
+            activation = network_group.activate(network_group_params)
+            activation.__enter__()
+            try:
+                infer_pipeline = runtime.InferVStreams(
+                    network_group,
+                    input_vstream_params,
+                    output_vstream_params,
+                    tf_nms_format=True,
+                )
+            except TypeError:
+                infer_pipeline = runtime.InferVStreams(
+                    network_group,
+                    input_vstream_params,
+                    output_vstream_params,
+                )
+            infer_pipeline.__enter__()
+
+            self._resources.extend([infer_pipeline, activation, vdevice])
+            input_name = getattr(input_info, "name", next(iter(input_vstream_params.keys())))
+            input_h, input_w, input_c = self._resolve_input_shape(getattr(input_info, "shape", ()))
+
+            def _infer(frame: np.ndarray):
+                batch = self._preprocess_frame(frame, input_w, input_h, input_c)
+                outputs = infer_pipeline.infer({input_name: batch})
+                return self._parse_hailo_outputs(outputs, output_infos)
+
+            return _infer
+        except Exception as exc:
+            self.close()
+            self._init_error = f"inizializzazione Hailo fallita: {exc}"
+            return None
+
+    def _resolve_input_shape(self, shape) -> tuple[int, int, int]:
+        dims = tuple(int(value) for value in shape)
+        if len(dims) >= 3:
+            return dims[-3], dims[-2], dims[-1]
+        return 640, 640, 3
+
+    def _preprocess_frame(self, frame: np.ndarray, width: int, height: int, channels: int) -> np.ndarray:
+        resized = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+        if channels == 3:
+            resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        elif channels == 1:
+            resized = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)[..., np.newaxis]
+        batch = np.expand_dims(np.ascontiguousarray(resized), axis=0).astype(np.uint8)
+        return batch
+
+    def _parse_hailo_outputs(self, outputs, output_infos) -> list[dict]:
+        parsed: list[dict] = []
+        if isinstance(outputs, dict):
+            items = list(outputs.items())
+        else:
+            items = [("output", outputs)]
+
+        for output_index, (name, value) in enumerate(items):
+            info = output_infos[output_index] if output_index < len(output_infos) else None
+            parsed.extend(self._parse_output_tensor(value, info=info, fallback_name=name))
+        return parsed
+
+    def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
+        if isinstance(value, list):
+            return self._parse_nms_list(value)
+
+        array = np.asarray(value)
+        if array.size == 0:
+            return []
+        if array.dtype == object:
+            detections: list[dict] = []
+            for item in array.tolist():
+                detections.extend(self._parse_output_tensor(item, info=info, fallback_name=fallback_name))
+            return detections
+        if array.ndim >= 1 and array.shape[0] == 1:
+            array = array[0]
+        if array.ndim == 3:
+            return self._parse_nms_list([array[class_id] for class_id in range(array.shape[0])])
+        if array.ndim == 2 and array.shape[-1] >= 5:
+            label = self._output_label(info=info, fallback_name=fallback_name, class_id=0)
+            return self._parse_detection_rows(array, label=label)
+        return []
+
+    def _parse_nms_list(self, per_class_outputs: list) -> list[dict]:
+        detections: list[dict] = []
+        for class_id, class_output in enumerate(per_class_outputs):
+            rows = np.asarray(class_output)
+            if rows.size == 0:
+                continue
+            if rows.ndim == 1:
+                rows = np.expand_dims(rows, axis=0)
+            if rows.ndim > 2:
+                rows = rows.reshape(-1, rows.shape[-1])
+            label = self._output_label(class_id=class_id)
+            detections.extend(self._parse_detection_rows(rows, label=label))
+        return detections
+
+    def _parse_detection_rows(self, rows: np.ndarray, label: str) -> list[dict]:
+        detections: list[dict] = []
+        for row in rows:
+            if len(row) < 5:
+                continue
+            x1, y1, x2, y2, score = self._decode_bbox_row(row)
+            detections.append(
+                {
+                    "label": label,
+                    "score": float(score),
+                    "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                }
+            )
+        return detections
+
+    def _decode_bbox_row(self, row) -> tuple[float, float, float, float, float]:
+        values = [float(item) for item in row[:6]]
+        if len(values) >= 6:
+            y1, x1, y2, x2, score, _ = values[:6]
+            return x1, y1, x2, y2, score
+        y1, x1, y2, x2, score = values[:5]
+        return x1, y1, x2, y2, score
+
+    def _output_label(self, info=None, fallback_name: str = "output", class_id: int = 0) -> str:
+        if class_id in self._labels:
+            return self._labels[class_id]
+        if info is not None and hasattr(info, "name"):
+            return str(info.name)
+        return fallback_name
 
     def _convert_predictions(self, predictions, frame_width: int, frame_height: int) -> list[Detection]:
         detections: list[Detection] = []
@@ -160,3 +314,23 @@ class HailoPersonDetector:
     @property
     def init_error(self) -> str | None:
         return self._init_error
+
+    def close(self) -> None:
+        while self._resources:
+            resource = self._resources.pop()
+            close = getattr(resource, "__exit__", None)
+            if close is None:
+                close = getattr(resource, "release", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:
+                        pass
+                continue
+            try:
+                close(None, None, None)
+            except Exception:
+                pass
+
+    def __del__(self):
+        self.close()
