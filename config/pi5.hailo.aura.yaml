@@ -45,7 +45,7 @@ render:
 
 recording:
   enabled: true
-  output_path: output/session_%Y%m%d_%H%M%S.mp4
+  output_path: /media/commento/Extreme Pro/aura/session_%Y%m%d_%H%M%S.mp4
   ffmpeg_bin: ffmpeg
   video_codec: libx264
   pixel_format: yuv420p
@@ -57,5 +57,5 @@ recording:
 
 archive_recording:
   enabled: true
-  output_path: output/archive_%Y%m%d_%H%M%S.mp4
+  output_path: /media/commento/Extreme Pro/aura/archive_%Y%m%d_%H%M%S.mp4
   audio_enabled: true
