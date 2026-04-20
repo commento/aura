@@ -37,20 +37,25 @@ class PerformerTracker:
 
         for det_index, detection in enumerate(detections):
             best_track_id = None
-            best_distance = float("inf")
+            best_score = float("-inf")
             for track_id, track in self._tracks.items():
                 if track_id in assigned_tracks:
                     continue
                 dist = hypot(detection.center[0] - track.center[0], detection.center[1] - track.center[1])
-                if dist < self.max_distance and dist < best_distance:
-                    best_distance = dist
+                if dist >= self.max_distance:
+                    continue
+                overlap = self._iou((detection.x, detection.y, detection.w, detection.h), track.bbox)
+                score = overlap * 2.0 + (1.0 - dist / max(self.max_distance, 1.0))
+                if score > best_score:
+                    best_score = score
                     best_track_id = track_id
 
             if best_track_id is not None:
-                self._tracks[best_track_id].bbox = (detection.x, detection.y, detection.w, detection.h)
-                self._tracks[best_track_id].center = detection.center
-                self._tracks[best_track_id].age += 1
-                self._tracks[best_track_id].missing_frames = 0
+                track = self._tracks[best_track_id]
+                track.bbox = self._smooth_bbox(track.bbox, (detection.x, detection.y, detection.w, detection.h))
+                track.center = self._bbox_center(track.bbox)
+                track.age += 1
+                track.missing_frames = 0
                 assigned_tracks.add(best_track_id)
                 assigned_detections.add(det_index)
 
@@ -80,7 +85,48 @@ class PerformerTracker:
                 age=track.age,
             )
             for track in self._tracks.values()
+            if track.missing_frames <= 2
         ]
+
+    def _smooth_bbox(
+        self,
+        previous: tuple[int, int, int, int],
+        current: tuple[int, int, int, int],
+    ) -> tuple[int, int, int, int]:
+        alpha = 0.65
+        return tuple(
+            int(previous[index] * (1.0 - alpha) + current[index] * alpha)
+            for index in range(4)
+        )
+
+    def _bbox_center(self, bbox: tuple[int, int, int, int]) -> tuple[int, int]:
+        x, y, w, h = bbox
+        return (x + w // 2, y + h // 2)
+
+    def _iou(
+        self,
+        bbox_a: tuple[int, int, int, int],
+        bbox_b: tuple[int, int, int, int],
+    ) -> float:
+        ax, ay, aw, ah = bbox_a
+        bx, by, bw, bh = bbox_b
+        ax2, ay2 = ax + aw, ay + ah
+        bx2, by2 = bx + bw, by + bh
+
+        inter_x1 = max(ax, bx)
+        inter_y1 = max(ay, by)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h
+        if inter_area == 0:
+            return 0.0
+
+        area_a = aw * ah
+        area_b = bw * bh
+        denom = area_a + area_b - inter_area
+        return inter_area / denom if denom > 0 else 0.0
 
 
 class AuraPipeline:
