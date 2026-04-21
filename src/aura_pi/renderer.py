@@ -64,7 +64,7 @@ class AuraRenderer:
         if aura_level <= 0.001:
             self.scene_energy = 0.0
         else:
-            self.scene_energy = self._ease(self.scene_energy, aura_level, attack=0.028, release=0.12)
+            self.scene_energy = self._ease(self.scene_energy, aura_level, attack=0.08, release=0.12)
 
         for performer in performers:
             self.trails[performer.track_id].append(performer.center)
@@ -77,14 +77,14 @@ class AuraRenderer:
             if target_presence <= 0.0:
                 current_presence = 0.0
             else:
-                current_presence = self._ease(current_presence, target_presence, attack=0.035, release=0.2)
+                current_presence = self._ease(current_presence, target_presence, attack=0.1, release=0.2)
             self.aura_states[performer.track_id] = current_presence
             if current_presence <= 0.01:
                 continue
 
             tone = self._aura_tone(current_presence)
-            energy = min(1.0, 0.08 + current_presence * 0.72 + audio.peak * 0.04)
-            radius = int(self.aura_radius * (0.28 + energy * 0.92))
+            energy = min(1.0, 0.16 + current_presence * 0.92 + audio.peak * 0.08)
+            radius = int(self.aura_radius * (0.82 + energy * 0.9))
             self._draw_ar_aura(mist, frame, performer, tone, radius, energy, current_presence)
             if self.trail:
                 self._draw_whisper_trail(mist, performer.track_id, tone, current_presence)
@@ -129,8 +129,8 @@ class AuraRenderer:
         return min(1.0, gate)
 
     def _aura_tone(self, audio_gate: float) -> tuple[int, int, int]:
-        blue_lift = int(audio_gate * 6)
-        base = 108 + int(audio_gate * 12)
+        blue_lift = int(audio_gate * 8)
+        base = 118 + int(audio_gate * 16)
         return (base, min(150, base + 2), min(158, base + 6 + blue_lift))
 
     def _draw_ar_aura(
