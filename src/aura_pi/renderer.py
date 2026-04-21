@@ -45,6 +45,7 @@ class AuraRenderer:
         self.warp_strength = warp_strength
         self.trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=24))
         self.aura_states: dict[int, float] = defaultdict(float)
+        self.anchor_states: dict[int, float] = defaultdict(float)
         self.scene_energy = 0.0
         self._plume_layer: np.ndarray | None = None
         self._last_seed_layer: np.ndarray | None = None
@@ -73,6 +74,14 @@ class AuraRenderer:
 
             match_strength = min(1.0, max(0.0, (performer.age - 1) / 10.0))
             target_presence = 0.0 if aura_level <= 0.001 else self.scene_energy * match_strength
+            anchor = self.anchor_states[performer.track_id]
+            if aura_level <= 0.001:
+                anchor = 0.0
+            else:
+                anchor_target = 0.14 + match_strength * 0.36
+                anchor = self._ease(anchor, anchor_target, attack=0.018, release=0.08)
+            self.anchor_states[performer.track_id] = anchor
+            target_presence = max(target_presence, anchor)
             current_presence = self.aura_states[performer.track_id]
             if target_presence <= 0.0:
                 current_presence = 0.0
@@ -96,6 +105,8 @@ class AuraRenderer:
             faded = self._ease(self.aura_states[track_id], 0.0, attack=0.0, release=0.04)
             if faded <= 0.01:
                 del self.aura_states[track_id]
+                if track_id in self.anchor_states:
+                    del self.anchor_states[track_id]
             else:
                 self.aura_states[track_id] = faded
 
@@ -104,6 +115,7 @@ class AuraRenderer:
         cv2.add(mist, plume, dst=mist)
         mist = self._soft_blur(mist, sigma=20)
         warped = self._apply_space_warp(dimmed, performers) if self.space_warp and self.warp_strength > 0.0 else dimmed
+        warped = self._apply_presence_glitch(warped, performers)
         composed = cv2.addWeighted(warped, 1.0, mist, self.aura_alpha * 0.66, 0.0)
         return composed
 
@@ -377,6 +389,72 @@ class AuraRenderer:
         map_x = np.clip(map_x, 0, w - 1).astype(np.float32)
         map_y = np.clip(map_y, 0, h - 1).astype(np.float32)
         return cv2.remap(frame, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+
+    def _apply_presence_glitch(self, frame: np.ndarray, performers: list[TrackedPerformer]) -> np.ndarray:
+        output = frame.copy()
+        for performer in performers:
+            presence = self.aura_states.get(performer.track_id, 0.0)
+            if presence <= 0.08:
+                continue
+
+            x, y, w, h = performer.bbox
+            roi_w = max(56, int(w * 0.72))
+            roi_h = max(64, int(h * 0.58))
+            cx = int(performer.center[0])
+            cy = int(y + h * 0.24)
+            x0 = max(0, cx - roi_w // 2)
+            y0 = max(0, cy - roi_h // 2)
+            x1 = min(output.shape[1], x0 + roi_w)
+            y1 = min(output.shape[0], y0 + roi_h)
+            roi = output[y0:y1, x0:x1]
+            if roi.size == 0:
+                continue
+
+            glitched_roi = self._glitch_presence_roi(roi, presence, performer.track_id)
+            blend = min(0.42, 0.12 + presence * 0.26)
+            cv2.addWeighted(glitched_roi, blend, roi, 1.0 - blend, 0.0, dst=roi)
+        return output
+
+    def _glitch_presence_roi(self, roi: np.ndarray, presence: float, track_id: int) -> np.ndarray:
+        h, w = roi.shape[:2]
+        if h < 4 or w < 4:
+            return roi
+
+        glitched = roi.copy()
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        threshold = int(90 + presence * 36)
+        active = gray > threshold
+
+        phase = track_id * 0.61 + presence * 4.0
+        max_shift = max(2, int(2 + presence * 9))
+        for col in range(w):
+            column_energy = float(np.mean(active[:, col]))
+            if column_energy < 0.08:
+                continue
+            shift = int(np.sin(col * 0.16 + phase) * max_shift * column_energy)
+            if shift != 0:
+                glitched[:, col] = np.roll(glitched[:, col], -shift, axis=0)
+
+        row_start = max(0, int(h * 0.06))
+        row_end = min(h, int(h * 0.78))
+        for row in range(row_start, row_end):
+            indices = np.flatnonzero(active[row])
+            if indices.size < max(6, int(w * 0.1)):
+                continue
+            left = int(indices[0])
+            right = int(indices[-1]) + 1
+            segment = glitched[row, left:right]
+            luminance = np.mean(segment, axis=1)
+            order = np.argsort(luminance)
+            if (row + track_id) % 2 == 0:
+                glitched[row, left:right] = segment[order]
+            else:
+                glitched[row, left:right] = segment[order[::-1]]
+
+        channel_offset = max(1, int(presence * 5))
+        glitched[:, :, 0] = np.roll(glitched[:, :, 0], -channel_offset, axis=1)
+        glitched[:, :, 2] = np.roll(glitched[:, :, 2], channel_offset, axis=0)
+        return cv2.GaussianBlur(glitched, (0, 0), sigmaX=0.8, sigmaY=0.8)
 
     def _ensure_plume_layer(self, frame: np.ndarray) -> None:
         if self._plume_layer is None or self._plume_layer.shape != frame.shape:
