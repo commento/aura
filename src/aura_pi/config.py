@@ -25,6 +25,7 @@ class DetectorConfig:
     history: int
     var_threshold: int
     learning_rate: float
+    interval: int = 1
     score_threshold: float = 0.4
     max_detections: int = 6
     model_path: str | None = None
@@ -112,6 +113,7 @@ def load_config(path: str | Path) -> AppConfig:
             history=detector_raw.get("history", 250),
             var_threshold=detector_raw.get("var_threshold", 64),
             learning_rate=detector_raw.get("learning_rate", 0.001),
+            interval=detector_raw.get("interval", 1),
             score_threshold=detector_raw.get("score_threshold", 0.4),
             max_detections=detector_raw.get("max_detections", 6),
             model_path=detector_raw.get("model_path"),

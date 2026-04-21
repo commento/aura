@@ -146,6 +146,9 @@ class AuraPipeline:
         )
         self._display_size = self._detect_display_size() if config.video.fullscreen_preview else None
         self.detector = self._build_detector()
+        self._detector_interval = max(1, config.detector.interval)
+        self._frame_index = 0
+        self._last_detections: list[Detection] = []
         self.tracker = PerformerTracker(
             max_distance=config.tracker.max_distance,
             max_missing_frames=config.tracker.max_missing_frames,
@@ -220,10 +223,14 @@ class AuraPipeline:
                 packet = None
                 if not paused or last_output is None:
                     packet = self.video.read()
-                    detections = self.detector.detect(packet.frame)
+                    should_detect = (self._frame_index % self._detector_interval) == 0 or not self._last_detections
+                    if should_detect:
+                        self._last_detections = self.detector.detect(packet.frame)
+                    detections = self._last_detections
                     performers = self.tracker.update(detections)
                     audio_features = self.audio.read() if self.config.audio.enabled else AudioFeatures()
                     last_output = self.renderer.render(packet.frame, performers, audio_features)
+                    self._frame_index += 1
 
                 if self.recorder is not None and last_output is not None and not paused:
                     self.recorder.write(last_output)
@@ -247,25 +254,13 @@ class AuraPipeline:
             if self.recorder is not None:
                 self.recorder.close()
                 audio_path = None
-                if (
-                    self.audio_recording_path is not None
-                    and self.config.recording.audio_enabled
-                    and self.audio.recorded_duration >= 0.5
-                ):
+                if self.audio_recording_path is not None and self.config.recording.audio_enabled:
                     audio_path = str(self.audio_recording_path)
-                elif self.config.recording.audio_enabled and self.config.audio.enabled:
-                    print(
-                        "[Aura Pi] Audio realtime non rilevato o troppo breve; salvo il video senza audio."
-                    )
                 self.recorder.finalize(audio_path)
             if self.archive_recorder is not None:
                 self.archive_recorder.close()
                 archive_audio_path = None
-                if (
-                    self.audio_recording_path is not None
-                    and self.config.archive_recording.audio_enabled
-                    and self.audio.recorded_duration >= 0.5
-                ):
+                if self.audio_recording_path is not None and self.config.archive_recording.audio_enabled:
                     archive_audio_path = str(self.audio_recording_path)
                 self.archive_recorder.finalize(archive_audio_path)
 

@@ -16,6 +16,7 @@ detector:
   history: 250
   var_threshold: 64
   learning_rate: 0.0001
+  interval: 3
   score_threshold: 0.2
   max_detections: 6
   target_label: person
