@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import signal
 
 from .config import load_config
 from .pipeline import AuraPipeline
@@ -16,6 +17,8 @@ def main() -> None:
     args = parse_args()
     config = load_config(args.config)
     pipeline = AuraPipeline(config)
+    signal.signal(signal.SIGINT, lambda signum, frame: pipeline.request_stop())
+    signal.signal(signal.SIGTERM, lambda signum, frame: pipeline.request_stop())
     pipeline.run()
 
 

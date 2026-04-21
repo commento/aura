@@ -146,6 +146,7 @@ class AuraPipeline:
             device_index=config.video.device_index,
         )
         self._display_size = self._detect_display_size() if config.video.fullscreen_preview else None
+        self._stop_requested = False
         self.detector = self._build_detector()
         self._detector_interval = max(1, config.detector.interval)
         self._frame_index = 0
@@ -220,7 +221,7 @@ class AuraPipeline:
         last_output = None
 
         try:
-            while True:
+            while not self._stop_requested:
                 packet = None
                 if not paused or last_output is None:
                     packet = self.video.read()
@@ -266,6 +267,9 @@ class AuraPipeline:
                 if self.audio_recording_path is not None and self.config.archive_recording.audio_enabled:
                     archive_audio_path = str(self.audio_recording_path)
                 self.archive_recorder.finalize(archive_audio_path)
+
+    def request_stop(self) -> None:
+        self._stop_requested = True
 
     def _setup_window(self) -> None:
         cv2.namedWindow(self.config.video.window_name, cv2.WINDOW_NORMAL)
