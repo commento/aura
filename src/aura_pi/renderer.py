@@ -331,11 +331,22 @@ class AuraRenderer:
 
     def _apply_space_warp(self, frame: np.ndarray, performers: list[TrackedPerformer]) -> np.ndarray:
         active = [
-            (performer, self.aura_states.get(performer.track_id, 0.0))
+            (
+                performer,
+                max(
+                    self.aura_states.get(performer.track_id, 0.0),
+                    self.anchor_states.get(performer.track_id, 0.0),
+                    self.scene_energy * 0.75,
+                ),
+            )
             for performer in performers
-            if self.aura_states.get(performer.track_id, 0.0) > 0.04
+            if max(
+                self.aura_states.get(performer.track_id, 0.0),
+                self.anchor_states.get(performer.track_id, 0.0),
+                self.scene_energy * 0.75,
+            ) > 0.04
         ]
-        if not active:
+        if not active and self.scene_energy <= 0.01:
             return frame
 
         h, w = frame.shape[:2]
@@ -347,7 +358,10 @@ class AuraRenderer:
         yy *= h / grid_h
         scene_presence = float(
             np.clip(
-                np.mean([presence for _, presence in active]) if active else 0.0,
+                max(
+                    self.scene_energy,
+                    np.mean([presence for _, presence in active]) if active else 0.0,
+                ),
                 0.0,
                 1.0,
             )
@@ -394,14 +408,14 @@ class AuraRenderer:
         output = frame.copy()
         for performer in performers:
             presence = self.aura_states.get(performer.track_id, 0.0)
-            if presence <= 0.08:
+            if presence <= 0.05:
                 continue
 
             x, y, w, h = performer.bbox
-            roi_w = max(56, int(w * 0.72))
-            roi_h = max(64, int(h * 0.58))
+            roi_w = max(72, int(w * 0.86))
+            roi_h = max(80, int(h * 0.66))
             cx = int(performer.center[0])
-            cy = int(y + h * 0.24)
+            cy = int(y + h * 0.22)
             x0 = max(0, cx - roi_w // 2)
             y0 = max(0, cy - roi_h // 2)
             x1 = min(output.shape[1], x0 + roi_w)
@@ -411,7 +425,7 @@ class AuraRenderer:
                 continue
 
             glitched_roi = self._glitch_presence_roi(roi, presence, performer.track_id)
-            blend = min(0.42, 0.12 + presence * 0.26)
+            blend = min(0.62, 0.22 + presence * 0.34)
             cv2.addWeighted(glitched_roi, blend, roi, 1.0 - blend, 0.0, dst=roi)
         return output
 
@@ -422,11 +436,11 @@ class AuraRenderer:
 
         glitched = roi.copy()
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        threshold = int(90 + presence * 36)
+        threshold = int(76 + presence * 28)
         active = gray > threshold
 
         phase = track_id * 0.61 + presence * 4.0
-        max_shift = max(2, int(2 + presence * 9))
+        max_shift = max(3, int(4 + presence * 14))
         for col in range(w):
             column_energy = float(np.mean(active[:, col]))
             if column_energy < 0.08:
@@ -439,7 +453,7 @@ class AuraRenderer:
         row_end = min(h, int(h * 0.78))
         for row in range(row_start, row_end):
             indices = np.flatnonzero(active[row])
-            if indices.size < max(6, int(w * 0.1)):
+            if indices.size < max(8, int(w * 0.08)):
                 continue
             left = int(indices[0])
             right = int(indices[-1]) + 1
@@ -451,10 +465,10 @@ class AuraRenderer:
             else:
                 glitched[row, left:right] = segment[order[::-1]]
 
-        channel_offset = max(1, int(presence * 5))
+        channel_offset = max(1, int(2 + presence * 7))
         glitched[:, :, 0] = np.roll(glitched[:, :, 0], -channel_offset, axis=1)
         glitched[:, :, 2] = np.roll(glitched[:, :, 2], channel_offset, axis=0)
-        return cv2.GaussianBlur(glitched, (0, 0), sigmaX=0.8, sigmaY=0.8)
+        return cv2.GaussianBlur(glitched, (0, 0), sigmaX=0.45, sigmaY=0.45)
 
     def _ensure_plume_layer(self, frame: np.ndarray) -> None:
         if self._plume_layer is None or self._plume_layer.shape != frame.shape:
