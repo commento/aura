@@ -20,7 +20,7 @@ detector:
   max_detections: 6
   target_label: person
   model_path: /usr/local/hailo/resources/models/hailo8/yolov6n.hef
-  labels_path: /usr/local/hailo/resources/coco.txt
+  labels_path:
 
 tracker:
   max_distance: 140
