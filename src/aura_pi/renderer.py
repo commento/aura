@@ -412,10 +412,10 @@ class AuraRenderer:
                 continue
 
             x, y, w, h = performer.bbox
-            face_w = max(64, int(w * 0.58))
-            face_h = max(72, int(h * 0.34))
+            face_w = max(72, int(w * 0.62))
+            face_h = max(80, int(h * 0.38))
             cx = int(performer.center[0])
-            cy = int(y + h * 0.18)
+            cy = int(y + h * 0.2)
             x0 = max(0, cx - face_w // 2)
             y0 = max(0, cy - face_h // 2)
             x1 = min(output.shape[1], x0 + face_w)
@@ -425,8 +425,14 @@ class AuraRenderer:
                 continue
 
             glitched_roi = self._glitch_presence_roi(roi, presence, performer.track_id)
-            blend = min(0.78, 0.34 + presence * 0.36)
-            cv2.addWeighted(glitched_roi, blend, roi, 1.0 - blend, 0.0, dst=roi)
+            mask = self._presence_glitch_mask(roi.shape[0], roi.shape[1], presence)
+            blend = min(0.48, 0.14 + presence * 0.22)
+            mixed = cv2.addWeighted(glitched_roi, blend, roi, 1.0 - blend, 0.0)
+            roi_float = roi.astype(np.float32)
+            mixed_float = mixed.astype(np.float32)
+            mask_3 = (mask.astype(np.float32) / 255.0)[..., None]
+            blended = roi_float * (1.0 - mask_3) + mixed_float * mask_3
+            roi[:] = np.clip(blended, 0, 255).astype(np.uint8)
         return output
 
     def _glitch_presence_roi(self, roi: np.ndarray, presence: float, track_id: int) -> np.ndarray:
@@ -434,48 +440,51 @@ class AuraRenderer:
         if h < 4 or w < 4:
             return roi
 
-        glitched = roi.copy()
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        threshold = int(64 + presence * 22)
-        active = gray > threshold
+        mono = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        glitched = cv2.cvtColor(mono, cv2.COLOR_GRAY2BGR)
+        threshold = int(70 + presence * 18)
+        active = mono > threshold
 
         phase = track_id * 0.61 + presence * 4.0
-        max_shift = max(5, int(8 + presence * 18))
+        max_shift = max(2, int(4 + presence * 8))
         for col in range(w):
             column_energy = float(np.mean(active[:, col]))
-            if column_energy < 0.08:
+            if column_energy < 0.16:
                 continue
             shift = int(np.sin(col * 0.16 + phase) * max_shift * column_energy)
             if shift != 0:
                 glitched[:, col] = np.roll(glitched[:, col], -shift, axis=0)
 
-        row_start = max(0, int(h * 0.04))
-        row_end = min(h, int(h * 0.92))
-        for row in range(row_start, row_end):
-            indices = np.flatnonzero(active[row])
-            if indices.size < max(8, int(w * 0.08)):
-                continue
-            left = int(indices[0])
-            right = int(indices[-1]) + 1
-            segment = glitched[row, left:right]
-            luminance = np.mean(segment, axis=1)
-            order = np.argsort(luminance)
-            if (row + track_id) % 2 == 0:
-                glitched[row, left:right] = segment[order]
-            else:
-                glitched[row, left:right] = segment[order[::-1]]
-
-        band_height = max(2, int(h * 0.06))
+        band_height = max(3, int(h * 0.075))
         for band_start in range(0, h, band_height):
             band_end = min(h, band_start + band_height)
-            band_shift = int(np.sin(band_start * 0.12 + phase * 1.4) * (presence * 10 + 4))
+            band_mask = active[band_start:band_end]
+            if float(np.mean(band_mask)) < 0.08:
+                continue
+            band_shift = int(np.sin(band_start * 0.1 + phase * 1.3) * (presence * 5 + 2))
             if band_shift != 0:
                 glitched[band_start:band_end] = np.roll(glitched[band_start:band_end], band_shift, axis=1)
 
-        channel_offset = max(2, int(4 + presence * 10))
-        glitched[:, :, 0] = np.roll(glitched[:, :, 0], -channel_offset, axis=1)
-        glitched[:, :, 2] = np.roll(glitched[:, :, 2], channel_offset, axis=0)
-        return cv2.GaussianBlur(glitched, (0, 0), sigmaX=0.2, sigmaY=0.2)
+        noise = np.sin(
+            np.linspace(0, np.pi * (2.0 + presence * 2.5), w, dtype=np.float32)[None, :]
+            + np.linspace(0, np.pi * 1.4, h, dtype=np.float32)[:, None]
+            + phase
+        )
+        noise = ((noise * (10.0 + presence * 18.0)) + 128.0).astype(np.uint8)
+        noise_bgr = cv2.cvtColor(noise, cv2.COLOR_GRAY2BGR)
+        glitched = cv2.addWeighted(glitched, 0.84, noise_bgr, 0.16, 0.0)
+        return cv2.GaussianBlur(glitched, (0, 0), sigmaX=0.8, sigmaY=0.8)
+
+    def _presence_glitch_mask(self, height: int, width: int, presence: float) -> np.ndarray:
+        mask = np.zeros((height, width), dtype=np.uint8)
+        center = (width // 2, max(0, int(height * 0.42)))
+        axes = (
+            max(14, int(width * (0.22 + presence * 0.08))),
+            max(18, int(height * (0.24 + presence * 0.08))),
+        )
+        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1, cv2.LINE_AA)
+        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=8.0, sigmaY=8.0)
+        return mask
 
     def _ensure_plume_layer(self, frame: np.ndarray) -> None:
         if self._plume_layer is None or self._plume_layer.shape != frame.shape:
