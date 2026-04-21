@@ -26,6 +26,7 @@ class TrackState:
     age: int = 0
     missing_frames: int = 0
     hits: int = 1
+    confirmed: bool = False
 
 
 class PerformerTracker:
@@ -61,6 +62,7 @@ class PerformerTracker:
                 track.age += 1
                 track.missing_frames = 0
                 track.hits += 1
+                track.confirmed = track.confirmed or track.hits >= 2
                 assigned_tracks.add(best_track_id)
                 assigned_detections.add(det_index)
 
@@ -75,6 +77,7 @@ class PerformerTracker:
                 center=detection.center,
                 age=1,
                 hits=1,
+                confirmed=False,
             )
 
         for track_id in list(self._tracks.keys()):
@@ -91,7 +94,7 @@ class PerformerTracker:
                 age=track.age,
             )
             for track in self._tracks.values()
-            if track.hits >= 2 and track.missing_frames <= min(self.max_missing_frames, 20)
+            if track.confirmed and track.missing_frames <= self._visible_missing_limit(track)
         ]
 
     def _smooth_bbox(
@@ -133,6 +136,13 @@ class PerformerTracker:
         area_b = bw * bh
         denom = area_a + area_b - inter_area
         return inter_area / denom if denom > 0 else 0.0
+
+    def _visible_missing_limit(self, track: TrackState) -> int:
+        if track.hits >= 8:
+            return min(self.max_missing_frames, 45)
+        if track.hits >= 4:
+            return min(self.max_missing_frames, 28)
+        return min(self.max_missing_frames, 18)
 
 
 class AuraPipeline:

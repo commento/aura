@@ -47,6 +47,7 @@ class AuraRenderer:
         self.aura_states: dict[int, float] = defaultdict(float)
         self.scene_energy = 0.0
         self._plume_layer: np.ndarray | None = None
+        self._last_seed_layer: np.ndarray | None = None
 
     def render(self, frame: np.ndarray, performers: list[TrackedPerformer], audio: AudioFeatures) -> np.ndarray:
         base = frame.copy()
@@ -362,12 +363,12 @@ class AuraRenderer:
         radius = np.sqrt(norm_x * norm_x + norm_y * norm_y)
         edge_falloff = np.clip((radius - 0.22) / 0.95, 0.0, 1.0)
 
-        fisheye_strength = float(self.warp_strength) * (0.35 + scene_presence * 0.65)
-        stretch = 1.0 + edge_falloff * edge_falloff * fisheye_strength * 0.22
+        fisheye_strength = float(self.warp_strength) * (0.4 + scene_presence * 0.6)
+        stretch = 1.0 + edge_falloff * edge_falloff * fisheye_strength * 0.28
         map_x_small = center_x + norm_x * stretch * (w * 0.5)
         map_y_small = center_y + norm_y * stretch * (h * 0.5)
 
-        swirl = edge_falloff * edge_falloff * fisheye_strength * 0.015
+        swirl = edge_falloff * edge_falloff * fisheye_strength * 0.02
         map_x_small += -norm_y * swirl * w
         map_y_small += norm_x * swirl * h
 
@@ -380,22 +381,36 @@ class AuraRenderer:
     def _ensure_plume_layer(self, frame: np.ndarray) -> None:
         if self._plume_layer is None or self._plume_layer.shape != frame.shape:
             self._plume_layer = np.zeros_like(frame)
+        if self._last_seed_layer is None or self._last_seed_layer.shape != frame.shape:
+            self._last_seed_layer = np.zeros_like(frame)
 
     def _update_plume_layer(self, mist: np.ndarray) -> np.ndarray:
         assert self._plume_layer is not None
+        assert self._last_seed_layer is not None
         plume = self._plume_layer
+        seed_layer = self._extract_upper_seed(mist)
 
         shifted = np.zeros_like(plume)
-        rise_px = 5
+        rise_px = 8
         if rise_px < plume.shape[0]:
             shifted[:-rise_px] = plume[rise_px:]
 
-        shifted = cv2.GaussianBlur(shifted, (0, 0), sigmaX=3.0, sigmaY=4.5)
-        shifted = cv2.convertScaleAbs(shifted, alpha=0.84, beta=0)
+        spread = cv2.GaussianBlur(shifted, (0, 0), sigmaX=5.5, sigmaY=6.5)
+        spread = cv2.convertScaleAbs(spread, alpha=0.82, beta=0)
 
-        seed = cv2.GaussianBlur(mist, (0, 0), sigmaX=5.0, sigmaY=5.0)
-        seed = cv2.convertScaleAbs(seed, alpha=0.18, beta=0)
-        cv2.add(shifted, seed, dst=shifted)
+        seed = cv2.GaussianBlur(seed_layer, (0, 0), sigmaX=4.0, sigmaY=4.0)
+        seed = cv2.convertScaleAbs(seed, alpha=0.22, beta=0)
+        cv2.add(spread, seed, dst=spread)
 
-        self._plume_layer = shifted
-        return shifted
+        self._last_seed_layer = seed_layer
+        self._plume_layer = spread
+        return spread
+
+    def _extract_upper_seed(self, mist: np.ndarray) -> np.ndarray:
+        h, w = mist.shape[:2]
+        mask = np.zeros((h, w), dtype=np.uint8)
+        top = 0
+        bottom = max(1, int(h * 0.42))
+        cv2.rectangle(mask, (0, top), (w, bottom), 255, -1)
+        masked = cv2.bitwise_and(mist, mist, mask=mask)
+        return masked
