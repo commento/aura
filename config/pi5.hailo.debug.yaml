@@ -11,7 +11,7 @@ video:
   window_name: Aura Pi Debug
 
 detector:
-  type: hailo_person
+  type: motion_person
   min_area: 5000
   history: 250
   var_threshold: 64

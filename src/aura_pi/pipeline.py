@@ -5,6 +5,7 @@ from math import hypot
 from pathlib import Path
 import platform
 import subprocess
+import threading
 
 import cv2
 import numpy as np
@@ -250,7 +251,9 @@ class AuraPipeline:
             cv2.destroyAllWindows()
             detector_close = getattr(self.detector, "close", None)
             if callable(detector_close):
-                detector_close()
+                close_thread = threading.Thread(target=detector_close, daemon=True)
+                close_thread.start()
+                close_thread.join(timeout=1.0)
             if self.recorder is not None:
                 self.recorder.close()
                 audio_path = None
