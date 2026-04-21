@@ -260,7 +260,7 @@ class HailoPersonDetector:
         detections: list[Detection] = []
         for item in predictions or []:
             label = self._prediction_label(item)
-            if not self._is_target_label(label):
+            if not self._matches_target(item, label):
                 continue
 
             score = float(item.get("score", 0.0))
@@ -288,6 +288,15 @@ class HailoPersonDetector:
         if normalized_label == normalized_target:
             return True
         return normalized_target in normalized_label or normalized_label in normalized_target
+
+    def _matches_target(self, item: dict, label: str) -> bool:
+        if self._is_target_label(label):
+            return True
+        class_id = item.get("class_id")
+        if class_id is None:
+            return False
+        normalized_target = self.target_label.strip().lower()
+        return normalized_target == "person" and int(class_id) == 0
 
     def _prediction_bbox(self, item: dict, frame_width: int, frame_height: int) -> tuple[int, int, int, int]:
         bbox = item.get("bbox", {})
