@@ -46,6 +46,7 @@ class AuraRenderer:
         self.trails: dict[int, deque[tuple[int, int]]] = defaultdict(lambda: deque(maxlen=24))
         self.aura_states: dict[int, float] = defaultdict(float)
         self.scene_energy = 0.0
+        self._plume_layer: np.ndarray | None = None
 
     def render(self, frame: np.ndarray, performers: list[TrackedPerformer], audio: AudioFeatures) -> np.ndarray:
         base = frame.copy()
@@ -56,9 +57,13 @@ class AuraRenderer:
             return base
 
         mist = np.zeros_like(frame)
+        self._ensure_plume_layer(frame)
         dimmed = cv2.convertScaleAbs(base, alpha=max(0.0, 1.0 - self.background_dim), beta=0)
         aura_level = self._audio_gate(audio)
-        self.scene_energy = self._ease(self.scene_energy, aura_level, attack=0.08, release=0.22)
+        if aura_level <= 0.001:
+            self.scene_energy = 0.0
+        else:
+            self.scene_energy = self._ease(self.scene_energy, aura_level, attack=0.08, release=0.12)
 
         for performer in performers:
             self.trails[performer.track_id].append(performer.center)
@@ -66,9 +71,12 @@ class AuraRenderer:
                 continue
 
             match_strength = min(1.0, max(0.0, (performer.age - 1) / 10.0))
-            target_presence = self.scene_energy * match_strength
+            target_presence = 0.0 if aura_level <= 0.001 else self.scene_energy * match_strength
             current_presence = self.aura_states[performer.track_id]
-            current_presence = self._ease(current_presence, target_presence, attack=0.1, release=0.28)
+            if target_presence <= 0.0:
+                current_presence = 0.0
+            else:
+                current_presence = self._ease(current_presence, target_presence, attack=0.1, release=0.2)
             self.aura_states[performer.track_id] = current_presence
             if current_presence <= 0.01:
                 continue
@@ -91,6 +99,8 @@ class AuraRenderer:
                 self.aura_states[track_id] = faded
 
         self._draw_group_fusion(mist, performers)
+        plume = self._update_plume_layer(mist)
+        cv2.add(mist, plume, dst=mist)
         mist = self._soft_blur(mist, sigma=20)
         warped = self._apply_space_warp(dimmed, performers) if self.space_warp and self.warp_strength > 0.0 else dimmed
         composed = cv2.addWeighted(warped, 1.0, mist, self.aura_alpha * 0.66, 0.0)
@@ -366,3 +376,26 @@ class AuraRenderer:
         map_x = np.clip(map_x, 0, w - 1).astype(np.float32)
         map_y = np.clip(map_y, 0, h - 1).astype(np.float32)
         return cv2.remap(frame, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+
+    def _ensure_plume_layer(self, frame: np.ndarray) -> None:
+        if self._plume_layer is None or self._plume_layer.shape != frame.shape:
+            self._plume_layer = np.zeros_like(frame)
+
+    def _update_plume_layer(self, mist: np.ndarray) -> np.ndarray:
+        assert self._plume_layer is not None
+        plume = self._plume_layer
+
+        shifted = np.zeros_like(plume)
+        rise_px = 5
+        if rise_px < plume.shape[0]:
+            shifted[:-rise_px] = plume[rise_px:]
+
+        shifted = cv2.GaussianBlur(shifted, (0, 0), sigmaX=3.0, sigmaY=4.5)
+        shifted = cv2.convertScaleAbs(shifted, alpha=0.84, beta=0)
+
+        seed = cv2.GaussianBlur(mist, (0, 0), sigmaX=5.0, sigmaY=5.0)
+        seed = cv2.convertScaleAbs(seed, alpha=0.18, beta=0)
+        cv2.add(shifted, seed, dst=shifted)
+
+        self._plume_layer = shifted
+        return shifted
