@@ -426,7 +426,7 @@ class AuraRenderer:
 
             glitched_roi = self._glitch_presence_roi(roi, presence, performer.track_id)
             mask = self._presence_glitch_mask(roi.shape[0], roi.shape[1], presence)
-            blend = min(0.72, 0.26 + presence * 0.32)
+            blend = min(0.88, 0.42 + presence * 0.34)
             mixed = cv2.addWeighted(glitched_roi, blend, roi, 1.0 - blend, 0.0)
             roi_float = roi.astype(np.float32)
             mixed_float = mixed.astype(np.float32)
@@ -442,11 +442,11 @@ class AuraRenderer:
 
         mono = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         phase = track_id * 0.61 + presence * 4.0
-        down_w = max(8, int(w * (0.16 + (1.0 - presence) * 0.06)))
-        down_h = max(10, int(h * (0.16 + (1.0 - presence) * 0.06)))
+        down_w = max(6, int(w * (0.1 + (1.0 - presence) * 0.04)))
+        down_h = max(8, int(h * (0.12 + (1.0 - presence) * 0.04)))
         degraded = cv2.resize(mono, (down_w, down_h), interpolation=cv2.INTER_AREA)
         degraded = cv2.resize(degraded, (w, h), interpolation=cv2.INTER_LINEAR)
-        degraded = cv2.GaussianBlur(degraded, (0, 0), sigmaX=3.5 + presence * 3.0, sigmaY=4.5 + presence * 3.5)
+        degraded = cv2.GaussianBlur(degraded, (0, 0), sigmaX=5.5 + presence * 3.5, sigmaY=6.5 + presence * 4.0)
 
         smudged = degraded.astype(np.float32)
         band_height = max(3, int(h * 0.08))
@@ -466,7 +466,7 @@ class AuraRenderer:
         cv2.ellipse(
             center_mask,
             (w // 2, max(0, int(h * 0.46))),
-            (max(12, int(w * 0.16)), max(12, int(h * 0.14))),
+            (max(14, int(w * 0.22)), max(14, int(h * 0.2))),
             0,
             0,
             360,
@@ -474,8 +474,23 @@ class AuraRenderer:
             -1,
             cv2.LINE_AA,
         )
-        center_mask = cv2.GaussianBlur(center_mask, (0, 0), sigmaX=10.0, sigmaY=10.0).astype(np.float32) / 255.0
-        smudged = smudged * (1.0 - center_mask * 0.18) + 168.0 * (center_mask * 0.18)
+        center_mask = cv2.GaussianBlur(center_mask, (0, 0), sigmaX=7.0, sigmaY=7.0).astype(np.float32) / 255.0
+        smudged = smudged * (1.0 - center_mask * 0.42) + 186.0 * (center_mask * 0.42)
+
+        void_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.ellipse(
+            void_mask,
+            (w // 2, max(0, int(h * 0.48))),
+            (max(10, int(w * 0.12)), max(8, int(h * 0.08))),
+            0,
+            0,
+            360,
+            255,
+            -1,
+            cv2.LINE_AA,
+        )
+        void_mask = cv2.GaussianBlur(void_mask, (0, 0), sigmaX=4.0, sigmaY=4.0).astype(np.float32) / 255.0
+        smudged = smudged * (1.0 - void_mask * 0.5) + 204.0 * (void_mask * 0.5)
 
         scan = np.sin(np.linspace(0, np.pi * (7.0 + presence * 8.0), h, dtype=np.float32)[:, None] + phase)
         scan *= 5.0 + presence * 10.0
@@ -485,18 +500,18 @@ class AuraRenderer:
             + phase * 0.7
         ) * (4.0 + presence * 8.0)
         smudged = np.clip(smudged + scan + texture, 0.0, 255.0)
-        smudged = cv2.convertScaleAbs(smudged, alpha=max(0.55, 0.78 - presence * 0.08), beta=18 + int(presence * 18))
+        smudged = cv2.convertScaleAbs(smudged, alpha=max(0.38, 0.6 - presence * 0.1), beta=34 + int(presence * 22))
         return cv2.cvtColor(smudged, cv2.COLOR_GRAY2BGR)
 
     def _presence_glitch_mask(self, height: int, width: int, presence: float) -> np.ndarray:
         mask = np.zeros((height, width), dtype=np.uint8)
         center = (width // 2, max(0, int(height * 0.42)))
         axes = (
-            max(14, int(width * (0.22 + presence * 0.08))),
-            max(18, int(height * (0.24 + presence * 0.08))),
+            max(16, int(width * (0.26 + presence * 0.08))),
+            max(20, int(height * (0.28 + presence * 0.08))),
         )
         cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1, cv2.LINE_AA)
-        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=8.0, sigmaY=8.0)
+        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=5.0, sigmaY=5.0)
         return mask
 
     def _ensure_plume_layer(self, frame: np.ndarray) -> None:
