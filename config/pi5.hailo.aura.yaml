@@ -11,7 +11,7 @@ video:
   window_name: Aura Pi
 
 detector:
-  type: motion_person
+  type: hailo_person
   min_area: 5000
   history: 250
   var_threshold: 64
@@ -20,7 +20,7 @@ detector:
   score_threshold: 0.2
   max_detections: 6
   target_label: person
-  model_path: /usr/local/hailo/resources/models/hailo8/yolov6n.hef
+  model_path: /home/commento/Downloads/yolov8n.hef
   labels_path:
 
 tracker:

@@ -19,8 +19,8 @@ detector:
   score_threshold: 0.2
   max_detections: 4
   target_label: person
-  model_path: /home/commento/models/person_detection.hef
-  labels_path: /home/commento/models/coco.txt
+  model_path: /home/commento/Downloads/yolov8n.hef
+  labels_path:
 
 tracker:
   max_distance: 110
