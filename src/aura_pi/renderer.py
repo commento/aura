@@ -58,7 +58,7 @@ class AuraRenderer:
         mist = np.zeros_like(frame)
         dimmed = cv2.convertScaleAbs(base, alpha=max(0.0, 1.0 - self.background_dim), beta=0)
         aura_level = self._audio_gate(audio)
-        self.scene_energy = self._ease(self.scene_energy, aura_level, attack=0.06, release=0.018)
+        self.scene_energy = self._ease(self.scene_energy, aura_level, attack=0.08, release=0.22)
 
         for performer in performers:
             self.trails[performer.track_id].append(performer.center)
@@ -68,7 +68,7 @@ class AuraRenderer:
             match_strength = min(1.0, max(0.0, (performer.age - 1) / 10.0))
             target_presence = self.scene_energy * match_strength
             current_presence = self.aura_states[performer.track_id]
-            current_presence = self._ease(current_presence, target_presence, attack=0.08, release=0.03)
+            current_presence = self._ease(current_presence, target_presence, attack=0.1, release=0.28)
             self.aura_states[performer.track_id] = current_presence
             if current_presence <= 0.01:
                 continue
@@ -168,6 +168,10 @@ class AuraRenderer:
         shoulder_glow = cv2.dilate(shoulder_glow, np.ones((9, 9), np.uint8), iterations=1)
         self._apply_mask(image, shoulder_glow, x0, y0, soft)
 
+        mist_band = cv2.dilate(shoulder_glow, np.ones((15, 15), np.uint8), iterations=1)
+        mist_band = cv2.GaussianBlur(mist_band, (0, 0), sigmaX=6.0, sigmaY=6.0)
+        self._apply_mask(image, mist_band, x0, y0, faint)
+
         head_center = (int(cx), max(0, int(y + h * 0.18)))
         head_axes = (max(14, int(radius * 0.14)), max(20, int(radius * 0.2)))
         cv2.ellipse(image, head_center, head_axes, 0, 0, 360, soft, -1, cv2.LINE_AA)
@@ -179,6 +183,10 @@ class AuraRenderer:
         chest_center = (int(cx), int(y + h * 0.4))
         chest_axes = (max(18, int(w * 0.24)), max(8, int(h * 0.06)))
         cv2.ellipse(image, chest_center, chest_axes, 0, 0, 360, faint, -1, cv2.LINE_AA)
+
+        veil_center = (int(cx), int(y + h * 0.28))
+        veil_axes = (max(20, int(w * 0.3)), max(14, int(h * 0.12)))
+        cv2.ellipse(image, veil_center, veil_axes, 0, 0, 360, faint, -1, cv2.LINE_AA)
 
     def _draw_presence_fallback(
         self,
