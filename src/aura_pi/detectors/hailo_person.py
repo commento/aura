@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+from collections import Counter
 
 import cv2
 import numpy as np
@@ -42,6 +43,7 @@ class HailoPersonDetector:
         self._detect_calls = 0
         self._logged_preprocess = False
         self._debug_lines: list[str] = []
+        self._last_tensor_summary = "Hailo tensors: n/a"
         self._init_runtime()
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -57,13 +59,17 @@ class HailoPersonDetector:
         limited = detections[: self.max_detections]
         self._detect_calls += 1
         best_score = max((item.score for item in limited), default=0.0)
+        raw_summary = self._raw_prediction_summary(raw_predictions)
         summary = (
             f"Hailo call={self._detect_calls} raw={len(raw_predictions or [])} "
             f"filtered={len(limited)} best={best_score:.3f} thr={self.score_threshold:.2f}"
         )
         self._push_debug_line(summary)
+        self._push_debug_line(raw_summary)
+        self._push_debug_line(self._last_tensor_summary)
         if self._should_log_detection(len(raw_predictions or []), len(limited)):
             print(f"[Aura Pi][Hailo] {summary}")
+            print(f"[Aura Pi][Hailo] {raw_summary}")
         return limited
 
     def _init_runtime(self) -> None:
@@ -206,17 +212,24 @@ class HailoPersonDetector:
         else:
             items = [("output", outputs)]
 
+        summaries = []
+        for name, value in items:
+            try:
+                array = np.asarray(value)
+                shape = array.shape
+                if array.size == 0:
+                    summaries.append(f"{name}:{shape} empty")
+                else:
+                    arr_float = array.astype(np.float32, copy=False)
+                    summaries.append(
+                        f"{name}:{shape} max={float(np.max(arr_float)):.3f} mean={float(np.mean(arr_float)):.3f}"
+                    )
+            except Exception:
+                summaries.append(f"{name}:unavailable")
+        self._last_tensor_summary = f"Hailo tensors {' | '.join(summaries[:2])}"
         if self._detect_calls < 3:
-            shapes = []
-            for name, value in items:
-                try:
-                    shape = np.asarray(value).shape
-                except Exception:
-                    shape = "unavailable"
-                shapes.append(f"{name}:{shape}")
-            line = f"Hailo tensors {' | '.join(shapes)}"
-            self._push_debug_line(line)
-            print(f"[Aura Pi][Hailo] {line}")
+            self._push_debug_line(self._last_tensor_summary)
+            print(f"[Aura Pi][Hailo] {self._last_tensor_summary}")
 
         for output_index, (name, value) in enumerate(items):
             info = output_infos[output_index] if output_index < len(output_infos) else None
@@ -239,6 +252,27 @@ class HailoPersonDetector:
     @property
     def debug_lines(self) -> list[str]:
         return list(self._debug_lines)
+
+    def _raw_prediction_summary(self, predictions: list[dict] | None) -> str:
+        if not predictions:
+            return "Hailo raw labels: none"
+
+        counter: Counter[str] = Counter()
+        class_zero = 0
+        top_scores: list[str] = []
+        for item in predictions[:16]:
+            class_id = item.get("class_id")
+            label = str(item.get("label", "?"))
+            score = float(item.get("score", 0.0))
+            key = f"{label}:{class_id}" if class_id is not None else label
+            counter[key] += 1
+            if class_id == 0:
+                class_zero += 1
+            top_scores.append(f"{key}@{score:.2f}")
+
+        common = ", ".join(f"{name}x{count}" for name, count in counter.most_common(3))
+        top = " | ".join(top_scores[:4])
+        return f"Hailo raw labels {common} c0={class_zero} top={top}"
 
     def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
         if isinstance(value, list):
