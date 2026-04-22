@@ -519,20 +519,22 @@ class HailoPersonDetector:
             y1 *= frame_height
             y2 *= frame_height
 
-        x = max(0, int(x1))
-        y = max(0, int(y1))
-        w = int(x2 - x1)
-        h = int(y2 - y1)
+        x_low = min(x1, x2)
+        y_low = min(y1, y2)
+        w = int(abs(x2 - x1))
+        h = int(abs(y2 - y1))
+        x = max(0, int(x_low))
+        y = max(0, int(y_low))
 
         if w <= 0 and x2 > 0:
             w = int(x2)
         if h <= 0 and y2 > 0:
             h = int(y2)
 
-        if w <= 0 and x2 > x1:
-            w = int(round(x2 - x1))
-        if h <= 0 and y2 > y1:
-            h = int(round(y2 - y1))
+        if w <= 0 and x2 != x1:
+            w = int(round(abs(x2 - x1)))
+        if h <= 0 and y2 != y1:
+            h = int(round(abs(y2 - y1)))
 
         w = max(0, w)
         h = max(0, h)
