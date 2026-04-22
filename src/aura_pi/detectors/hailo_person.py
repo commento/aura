@@ -44,6 +44,7 @@ class HailoPersonDetector:
         self._logged_preprocess = False
         self._debug_lines: list[str] = []
         self._last_tensor_summary = "Hailo tensors: n/a"
+        self._last_filter_summary = "Hailo filter: n/a"
         self._init_runtime()
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -68,11 +69,13 @@ class HailoPersonDetector:
         self._push_debug_line(summary)
         self._push_debug_line(raw_summary)
         self._push_debug_line(row_preview)
+        self._push_debug_line(self._last_filter_summary)
         self._push_debug_line(self._last_tensor_summary)
         if self._should_log_detection(len(raw_predictions or []), len(limited)):
             print(f"[Aura Pi][Hailo] {summary}")
             print(f"[Aura Pi][Hailo] {raw_summary}")
             print(f"[Aura Pi][Hailo] {row_preview}")
+            print(f"[Aura Pi][Hailo] {self._last_filter_summary}")
         return limited
 
     def _init_runtime(self) -> None:
@@ -392,20 +395,33 @@ class HailoPersonDetector:
 
     def _convert_predictions(self, predictions, frame_width: int, frame_height: int) -> list[Detection]:
         detections: list[Detection] = []
+        rejected_label = 0
+        rejected_score = 0
+        rejected_bbox = 0
+        sample_bbox = "none"
         for item in predictions or []:
             label = self._prediction_label(item)
             if not self._matches_target(item, label):
+                rejected_label += 1
                 continue
 
             score = float(item.get("score", 0.0))
             if score < self.score_threshold:
+                rejected_score += 1
                 continue
 
             x, y, w, h = self._prediction_bbox(item, frame_width, frame_height)
+            if sample_bbox == "none":
+                sample_bbox = f"x={x} y={y} w={w} h={h}"
             if w <= 0 or h <= 0:
+                rejected_bbox += 1
                 continue
 
             detections.append(Detection(x=x, y=y, w=w, h=h, score=score, label=label))
+        self._last_filter_summary = (
+            f"Hailo filter label={rejected_label} score={rejected_score} "
+            f"bbox={rejected_bbox} sample={sample_bbox}"
+        )
         return detections
 
     def _prediction_label(self, item: dict) -> str:
