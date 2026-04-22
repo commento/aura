@@ -379,6 +379,8 @@ class HailoPersonDetector:
     def _is_target_label(self, label: str) -> bool:
         normalized_target = self.target_label.strip().lower()
         normalized_label = label.strip().lower()
+        if normalized_target.isdigit():
+            return normalized_label == normalized_target
         if normalized_label == normalized_target:
             return True
         return normalized_target in normalized_label or normalized_label in normalized_target
@@ -390,6 +392,8 @@ class HailoPersonDetector:
         if class_id is None:
             return False
         normalized_target = self.target_label.strip().lower()
+        if normalized_target.isdigit():
+            return int(class_id) == int(normalized_target)
         return normalized_target == "person" and int(class_id) == 0
 
     def _prediction_bbox(self, item: dict, frame_width: int, frame_height: int) -> tuple[int, int, int, int]:
