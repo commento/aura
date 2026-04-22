@@ -17,10 +17,10 @@ detector:
   var_threshold: 64
   learning_rate: 0.0001
   interval: 3
-  score_threshold: 0.0
-  max_detections: 12
-  target_label: "*"
-  model_path: /usr/local/hailo/resources/models/hailo8/scrfd_10g.hef
+  score_threshold: 0.2
+  max_detections: 6
+  target_label: person
+  model_path: /usr/local/hailo/resources/models/hailo8/yolov6n.hef
   labels_path:
 
 tracker:
@@ -39,8 +39,8 @@ render:
   aura_alpha: 0.58
   trail: false
   show_labels: false
-  debug_boxes: true
-  aura_enabled: false
+  debug_boxes: false
+  aura_enabled: true
   audio_threshold: 0.004
   audio_scale: 20.0
   space_warp: true

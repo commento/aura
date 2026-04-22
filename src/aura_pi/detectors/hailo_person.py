@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from collections import Counter
 
 import cv2
 import numpy as np
@@ -12,14 +11,8 @@ from .base import Detection
 
 class HailoPersonDetector:
     """
-    Skeleton detector for Raspberry Pi 5 + AI HAT+.
-
-    This adapter keeps the rest of the pipeline unchanged: whatever Hailo runtime
-    you install on the Pi only needs to provide person detections that we convert
-    to the project's Detection dataclass.
-
-    The actual Hailo runtime wiring is intentionally isolated here because the
-    exact Python package and model export path can vary with the installed stack.
+    Minimal Hailo adapter kept intentionally small until a verified official
+    decoder is available for the exact runtime/model combination on the Pi.
     """
 
     def __init__(
@@ -40,46 +33,19 @@ class HailoPersonDetector:
         self._init_error: str | None = None
         self._labels = self._load_labels(self.labels_path)
         self._resources: list[object] = []
-        self._detect_calls = 0
-        self._logged_preprocess = False
-        self._debug_lines: list[str] = []
-        self._last_tensor_summary = "Hailo tensors: n/a"
-        self._last_filter_summary = "Hailo filter: n/a"
         self._init_runtime()
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         if self._infer is None:
             raise RuntimeError(
                 "Hailo runtime non inizializzato. Installa lo stack Hailo sul Raspberry Pi "
-                "e configura detector.model_path con un modello person compatibile."
+                "e configura detector.model_path con un modello compatibile."
             )
 
         raw_predictions = self._infer(frame)
         detections = self._convert_predictions(raw_predictions, frame.shape[1], frame.shape[0])
         detections.sort(key=lambda item: item.score, reverse=True)
-        limited = detections[: self.max_detections]
-        self._detect_calls += 1
-        best_score = max((item.score for item in limited), default=0.0)
-        raw_summary = self._raw_prediction_summary(raw_predictions)
-        row_preview = self._raw_row_preview(raw_predictions)
-        decode_preview = self._raw_decode_preview(raw_predictions, frame.shape[1], frame.shape[0])
-        summary = (
-            f"Hailo call={self._detect_calls} raw={len(raw_predictions or [])} "
-            f"filtered={len(limited)} best={best_score:.3f} thr={self.score_threshold:.2f}"
-        )
-        self._push_debug_line(summary)
-        self._push_debug_line(raw_summary)
-        self._push_debug_line(row_preview)
-        self._push_debug_line(decode_preview)
-        self._push_debug_line(self._last_filter_summary)
-        self._push_debug_line(self._last_tensor_summary)
-        if self._should_log_detection(len(raw_predictions or []), len(limited)):
-            print(f"[Aura Pi][Hailo] {summary}")
-            print(f"[Aura Pi][Hailo] {raw_summary}")
-            print(f"[Aura Pi][Hailo] {row_preview}")
-            print(f"[Aura Pi][Hailo] {decode_preview}")
-            print(f"[Aura Pi][Hailo] {self._last_filter_summary}")
-        return limited
+        return detections[: self.max_detections]
 
     def _init_runtime(self) -> None:
         if self.model_path is None:
@@ -89,7 +55,6 @@ class HailoPersonDetector:
         runtime = self._import_runtime()
         if runtime is None:
             self._runtime_name = "missing_hailo_runtime"
-            self._infer = None
             self._init_error = (
                 "runtime Hailo non disponibile nell'ambiente Python corrente. "
                 "Sul Raspberry spesso i moduli sono installati a livello di sistema: "
@@ -98,10 +63,10 @@ class HailoPersonDetector:
             return
 
         self._infer = self._build_runtime_infer(model_path=self.model_path, runtime=runtime)
-        if self._infer is None:
+        if self._infer is None and self._init_error is None:
             self._init_error = (
-                f"runtime {self._runtime_name} rilevato ma adapter modello non ancora "
-                f"implementato per {self.model_path.name}"
+                f"runtime {self._runtime_name} rilevato ma adapter modello non verificato "
+                f"per {self.model_path.name}"
             )
 
     def _import_runtime(self):
@@ -203,16 +168,7 @@ class HailoPersonDetector:
             elif resized.ndim == 3 and resized.shape[2] == 1:
                 resized = resized[:, :, 0]
             resized = resized[..., np.newaxis]
-        batch = np.expand_dims(np.ascontiguousarray(resized), axis=0).astype(np.uint8)
-        if not self._logged_preprocess:
-            line = (
-                f"Hailo preprocess in={frame.shape} resized={resized.shape} "
-                f"model=({height},{width},{channels}) runtime={self._runtime_name}"
-            )
-            self._push_debug_line(line)
-            print(f"[Aura Pi][Hailo] {line}")
-            self._logged_preprocess = True
-        return batch
+        return np.expand_dims(np.ascontiguousarray(resized), axis=0).astype(np.uint8)
 
     def _parse_hailo_outputs(self, outputs, output_infos) -> list[dict]:
         parsed: list[dict] = []
@@ -221,120 +177,10 @@ class HailoPersonDetector:
         else:
             items = [("output", outputs)]
 
-        summaries = []
-        for name, value in items:
-            try:
-                array = np.asarray(value)
-                shape = array.shape
-                if array.size == 0:
-                    summaries.append(f"{name}:{shape} empty")
-                else:
-                    arr_float = array.astype(np.float32, copy=False)
-                    summaries.append(
-                        f"{name}:{shape} max={float(np.max(arr_float)):.3f} mean={float(np.mean(arr_float)):.3f}"
-                    )
-            except Exception:
-                summaries.append(f"{name}:unavailable")
-        self._last_tensor_summary = f"Hailo tensors {' | '.join(summaries[:2])}"
-        if self._detect_calls < 3:
-            self._push_debug_line(self._last_tensor_summary)
-            print(f"[Aura Pi][Hailo] {self._last_tensor_summary}")
-
         for output_index, (name, value) in enumerate(items):
             info = output_infos[output_index] if output_index < len(output_infos) else None
             parsed.extend(self._parse_output_tensor(value, info=info, fallback_name=name))
         return parsed
-
-    def _should_log_detection(self, raw_count: int, filtered_count: int) -> bool:
-        if self._detect_calls <= 5:
-            return True
-        if filtered_count == 0 and self._detect_calls % 15 == 0:
-            return True
-        if raw_count > 0 and filtered_count == 0 and self._detect_calls % 10 == 0:
-            return True
-        return False
-
-    def _push_debug_line(self, line: str) -> None:
-        self._debug_lines.append(line)
-        self._debug_lines = self._debug_lines[-6:]
-
-    @property
-    def debug_lines(self) -> list[str]:
-        return list(self._debug_lines)
-
-    def _raw_prediction_summary(self, predictions: list[dict] | None) -> str:
-        if not predictions:
-            return "Hailo raw labels: none"
-
-        counter: Counter[str] = Counter()
-        class_zero = 0
-        top_scores: list[str] = []
-        for item in predictions[:16]:
-            class_id = item.get("class_id")
-            label = str(item.get("label", "?"))
-            score = float(item.get("score", 0.0))
-            key = f"{label}:{class_id}" if class_id is not None else label
-            counter[key] += 1
-            if class_id == 0:
-                class_zero += 1
-            top_scores.append(f"{key}@{score:.2f}")
-
-        common = ", ".join(f"{name}x{count}" for name, count in counter.most_common(3))
-        top = " | ".join(top_scores[:4])
-        return f"Hailo raw labels {common} c0={class_zero} top={top}"
-
-    def _raw_row_preview(self, predictions: list[dict] | None) -> str:
-        if not predictions:
-            return "Hailo row: none"
-        item = predictions[0]
-        bbox = item.get("bbox", {})
-        raw = item.get("raw_row", [])
-        raw_text = ",".join(f"{float(value):.3f}" for value in raw[:6]) if raw else "n/a"
-        return (
-            "Hailo row "
-            f"cls={item.get('class_id')} score={float(item.get('score', 0.0)):.3f} "
-            f"x1={float(bbox.get('x1', 0.0)):.3f} y1={float(bbox.get('y1', 0.0)):.3f} "
-            f"x2={float(bbox.get('x2', 0.0)):.3f} y2={float(bbox.get('y2', 0.0)):.3f} "
-            f"raw=[{raw_text}]"
-        )
-
-    def _raw_decode_preview(self, predictions: list[dict] | None, frame_width: int, frame_height: int) -> str:
-        if not predictions:
-            return "Hailo decode: none"
-        raw = predictions[0].get("raw_row", [])
-        if len(raw) < 4:
-            return "Hailo decode: raw too short"
-        a, b, c, d = [float(value) for value in raw[:4]]
-        candidates = {
-            "xywh": (a, b, c, d),
-            "cxcywh": (a - c / 2.0, b - d / 2.0, c, d),
-            "yxyx": (b, a, d, c),
-            "xyxy": (a, b, c, d),
-        }
-        previews: list[str] = []
-        for name, candidate in candidates.items():
-            if name in {"xywh", "cxcywh"}:
-                x, y, w, h = candidate
-                if 0.0 <= x <= 1.0 and 0.0 < w <= 1.5:
-                    x *= frame_width
-                    w *= frame_width
-                if 0.0 <= y <= 1.0 and 0.0 < h <= 1.5:
-                    y *= frame_height
-                    h *= frame_height
-            else:
-                x1, y1, x2, y2 = candidate
-                if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.5:
-                    x1 *= frame_width
-                    x2 *= frame_width
-                if 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.5:
-                    y1 *= frame_height
-                    y2 *= frame_height
-                x = x1
-                y = y1
-                w = x2 - x1
-                h = y2 - y1
-            previews.append(f"{name}:x={int(x)} y={int(y)} w={int(w)} h={int(h)}")
-        return "Hailo decode " + " | ".join(previews[:4])
 
     def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
         if isinstance(value, list):
@@ -384,45 +230,16 @@ class HailoPersonDetector:
                     "class_id": class_id,
                     "score": float(score),
                     "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-                    "raw_row": [float(value) for value in row[:6]],
                 }
             )
         return detections
 
     def _decode_bbox_row(self, row) -> tuple[float, float, float, float, float]:
         values = [float(item) for item in row[:6]]
-        score = values[4] if len(values) >= 5 else 0.0
-        a, b, c, d = values[:4]
-
-        candidates = [
-            (a, b, a + c, b + d),  # x, y, w, h
-            (a - c / 2.0, b - d / 2.0, a + c / 2.0, b + d / 2.0),  # cx, cy, w, h
-            (b, a, d, c),  # y1, x1, y2, x2 -> x1, y1, x2, y2
-            (a, b, c, d),  # x1, y1, x2, y2
-            (b - d / 2.0, a - c / 2.0, b + d / 2.0, a + c / 2.0),  # cy, cx, h, w
-        ]
-
-        best = candidates[0]
-        best_score = float("-inf")
-        for x1, y1, x2, y2 in candidates:
-            width = x2 - x1
-            height = y2 - y1
-            if width <= 0 or height <= 0:
-                continue
-
-            candidate_score = width * height
-            if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.5 and 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.5:
-                candidate_score += 2.0
-            if width <= 1.2 and height <= 1.2:
-                candidate_score += 1.0
-            if x2 > x1 and y2 > y1 and x1 >= -0.25 and y1 >= -0.25:
-                candidate_score += 1.0
-
-            if candidate_score > best_score:
-                best_score = candidate_score
-                best = (x1, y1, x2, y2)
-
-        x1, y1, x2, y2 = best
+        if len(values) >= 6:
+            y1, x1, y2, x2, score, _ = values[:6]
+            return x1, y1, x2, y2, score
+        y1, x1, y2, x2, score = values[:5]
         return x1, y1, x2, y2, score
 
     def _output_label(self, info=None, fallback_name: str = "output", class_id: int = 0) -> str:
@@ -443,33 +260,20 @@ class HailoPersonDetector:
 
     def _convert_predictions(self, predictions, frame_width: int, frame_height: int) -> list[Detection]:
         detections: list[Detection] = []
-        rejected_label = 0
-        rejected_score = 0
-        rejected_bbox = 0
-        sample_bbox = "none"
         for item in predictions or []:
             label = self._prediction_label(item)
             if not self._matches_target(item, label):
-                rejected_label += 1
                 continue
 
             score = float(item.get("score", 0.0))
             if score < self.score_threshold:
-                rejected_score += 1
                 continue
 
             x, y, w, h = self._prediction_bbox(item, frame_width, frame_height)
-            if sample_bbox == "none":
-                sample_bbox = f"x={x} y={y} w={w} h={h}"
             if w <= 0 or h <= 0:
-                rejected_bbox += 1
                 continue
 
             detections.append(Detection(x=x, y=y, w=w, h=h, score=score, label=label))
-        self._last_filter_summary = (
-            f"Hailo filter label={rejected_label} score={rejected_score} "
-            f"bbox={rejected_bbox} sample={sample_bbox}"
-        )
         return detections
 
     def _prediction_label(self, item: dict) -> str:
@@ -493,11 +297,9 @@ class HailoPersonDetector:
         if self._is_target_label(label):
             return True
         class_id = item.get("class_id")
-        normalized_target = self.target_label.strip().lower()
-        if normalized_target in {"*", "any", "all"}:
-            return True
         if class_id is None:
             return False
+        normalized_target = self.target_label.strip().lower()
         if normalized_target.isdigit():
             return int(class_id) == int(normalized_target)
         return normalized_target == "person" and int(class_id) == 0
@@ -509,35 +311,17 @@ class HailoPersonDetector:
         x2 = float(bbox.get("x2", 0.0))
         y2 = float(bbox.get("y2", 0.0))
 
-        # Accept normalized coordinates as well as pixel coordinates.
-        normalized_x = 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.5
-        normalized_y = 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.5
-        if normalized_x:
+        if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.0:
             x1 *= frame_width
             x2 *= frame_width
-        if normalized_y:
+        if 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.0:
             y1 *= frame_height
             y2 *= frame_height
 
-        x_low = min(x1, x2)
-        y_low = min(y1, y2)
-        w = int(abs(x2 - x1))
-        h = int(abs(y2 - y1))
-        x = max(0, int(x_low))
-        y = max(0, int(y_low))
-
-        if w <= 0 and x2 > 0:
-            w = int(x2)
-        if h <= 0 and y2 > 0:
-            h = int(y2)
-
-        if w <= 0 and x2 != x1:
-            w = int(round(abs(x2 - x1)))
-        if h <= 0 and y2 != y1:
-            h = int(round(abs(y2 - y1)))
-
-        w = max(0, w)
-        h = max(0, h)
+        x = max(0, int(x1))
+        y = max(0, int(y1))
+        w = max(0, int(x2 - x1))
+        h = max(0, int(y2 - y1))
         return x, y, w, h
 
     def _load_labels(self, labels_path: Path | None) -> dict[int, str]:
