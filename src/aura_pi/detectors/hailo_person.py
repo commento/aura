@@ -343,10 +343,35 @@ class HailoPersonDetector:
 
     def _decode_bbox_row(self, row) -> tuple[float, float, float, float, float]:
         values = [float(item) for item in row[:6]]
-        if len(values) >= 6:
-            y1, x1, y2, x2, score, _ = values[:6]
-            return x1, y1, x2, y2, score
-        y1, x1, y2, x2, score = values[:5]
+        score = values[4] if len(values) >= 5 else 0.0
+        a, b, c, d = values[:4]
+
+        candidates = [
+            (b, a, d, c),  # y1, x1, y2, x2 -> x1, y1, x2, y2
+            (a, b, c, d),  # x1, y1, x2, y2
+            (a - c / 2.0, b - d / 2.0, a + c / 2.0, b + d / 2.0),  # cx, cy, w, h
+            (b - d / 2.0, a - c / 2.0, b + d / 2.0, a + c / 2.0),  # cy, cx, h, w
+        ]
+
+        best = candidates[0]
+        best_score = float("-inf")
+        for x1, y1, x2, y2 in candidates:
+            width = x2 - x1
+            height = y2 - y1
+            if width <= 0 or height <= 0:
+                continue
+
+            candidate_score = width * height
+            if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.5 and 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.5:
+                candidate_score += 2.0
+            if width <= 1.2 and height <= 1.2:
+                candidate_score += 1.0
+
+            if candidate_score > best_score:
+                best_score = candidate_score
+                best = (x1, y1, x2, y2)
+
+        x1, y1, x2, y2 = best
         return x1, y1, x2, y2, score
 
     def _output_label(self, info=None, fallback_name: str = "output", class_id: int = 0) -> str:
