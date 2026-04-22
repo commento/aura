@@ -17,7 +17,7 @@ detector:
   var_threshold: 64
   learning_rate: 0.0001
   interval: 3
-  score_threshold: 0.1
+  score_threshold: 0.01
   max_detections: 6
   target_label: "*"
   model_path: /home/commento/Downloads/yolov8n.hef

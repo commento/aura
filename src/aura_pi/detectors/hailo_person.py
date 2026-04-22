@@ -285,11 +285,14 @@ class HailoPersonDetector:
             return "Hailo row: none"
         item = predictions[0]
         bbox = item.get("bbox", {})
+        raw = item.get("raw_row", [])
+        raw_text = ",".join(f"{float(value):.3f}" for value in raw[:6]) if raw else "n/a"
         return (
             "Hailo row "
             f"cls={item.get('class_id')} score={float(item.get('score', 0.0)):.3f} "
             f"x1={float(bbox.get('x1', 0.0)):.3f} y1={float(bbox.get('y1', 0.0)):.3f} "
-            f"x2={float(bbox.get('x2', 0.0)):.3f} y2={float(bbox.get('y2', 0.0)):.3f}"
+            f"x2={float(bbox.get('x2', 0.0)):.3f} y2={float(bbox.get('y2', 0.0)):.3f} "
+            f"raw=[{raw_text}]"
         )
 
     def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
@@ -340,6 +343,7 @@ class HailoPersonDetector:
                     "class_id": class_id,
                     "score": float(score),
                     "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                    "raw_row": [float(value) for value in row[:6]],
                 }
             )
         return detections
