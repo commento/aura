@@ -9,9 +9,10 @@ from .base import Detection
 
 
 class MotionPeopleDetector:
-    def __init__(self, min_area: int, history: int, var_threshold: int, learning_rate: float):
+    def __init__(self, min_area: int, history: int, var_threshold: int, learning_rate: float, max_detections: int = 6):
         self.min_area = min_area
         self.learning_rate = learning_rate
+        self.max_detections = max_detections
         self.background = cv2.createBackgroundSubtractorMOG2(
             history=history,
             varThreshold=var_threshold,
@@ -46,27 +47,31 @@ class MotionPeopleDetector:
 
             detections.append(Detection(x=x, y=y, w=w, h=h, score=min(area / 20000.0, 1.0)))
 
-        detections.sort(key=lambda item: item.score, reverse=True)
-        if detections:
-            return detections[:6]
-
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = []
         if self.face_detector is not None:
             faces = self.face_detector.detectMultiScale(
                 gray,
                 scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(48, 48),
+                minNeighbors=4,
+                minSize=(40, 40),
             )
-        fallback: list[Detection] = []
-        for fx, fy, fw, fh in faces[:4]:
+
+        for fx, fy, fw, fh in faces[: self.max_detections]:
             px = max(0, int(fx - fw * 0.9))
             py = max(0, int(fy - fh * 0.7))
             pw = min(frame.shape[1] - px, int(fw * 2.8))
             ph = min(frame.shape[0] - py, int(fh * 4.2))
-            fallback.append(Detection(x=px, y=py, w=pw, h=ph, score=0.55))
-        return fallback
+            candidate = Detection(x=px, y=py, w=pw, h=ph, score=0.55)
+            if not self._overlaps_existing(candidate, detections, threshold=0.18):
+                detections.append(candidate)
+
+        if len(detections) < min(4, self.max_detections):
+            detections.extend(self._hog_people(frame, detections))
+
+        detections = self._non_max_suppression(detections, threshold=0.35)
+        detections.sort(key=lambda item: item.score, reverse=True)
+        return detections[: self.max_detections]
 
     def _looks_like_person(self, frame: np.ndarray, x: int, y: int, w: int, h: int) -> bool:
         pad_x = int(w * 0.15)
@@ -102,6 +107,65 @@ class MotionPeopleDetector:
             scale=1.05,
         )
         return len(rects) > 0
+
+    def _hog_people(self, frame: np.ndarray, existing: list[Detection]) -> list[Detection]:
+        rects, weights = self.hog.detectMultiScale(
+            frame,
+            winStride=(8, 8),
+            padding=(8, 8),
+            scale=1.05,
+        )
+        detections: list[Detection] = []
+        for (x, y, w, h), weight in zip(rects, weights):
+            candidate = Detection(
+                x=int(x),
+                y=int(y),
+                w=int(w),
+                h=int(h),
+                score=float(min(max(weight, 0.35), 0.8)),
+            )
+            if self._overlaps_existing(candidate, existing + detections, threshold=0.18):
+                continue
+            detections.append(candidate)
+            if len(detections) >= self.max_detections:
+                break
+        return detections
+
+    def _overlaps_existing(self, candidate: Detection, existing: list[Detection], threshold: float) -> bool:
+        candidate_bbox = (candidate.x, candidate.y, candidate.w, candidate.h)
+        for detection in existing:
+            if self._iou(candidate_bbox, (detection.x, detection.y, detection.w, detection.h)) >= threshold:
+                return True
+        return False
+
+    def _non_max_suppression(self, detections: list[Detection], threshold: float) -> list[Detection]:
+        kept: list[Detection] = []
+        for detection in sorted(detections, key=lambda item: item.score, reverse=True):
+            if self._overlaps_existing(detection, kept, threshold):
+                continue
+            kept.append(detection)
+        return kept
+
+    def _iou(self, bbox_a: tuple[int, int, int, int], bbox_b: tuple[int, int, int, int]) -> float:
+        ax, ay, aw, ah = bbox_a
+        bx, by, bw, bh = bbox_b
+        ax2, ay2 = ax + aw, ay + ah
+        bx2, by2 = bx + bw, by + bh
+
+        inter_x1 = max(ax, bx)
+        inter_y1 = max(ay, by)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h
+        if inter_area == 0:
+            return 0.0
+
+        area_a = aw * ah
+        area_b = bw * bh
+        denom = area_a + area_b - inter_area
+        return inter_area / denom if denom > 0 else 0.0
 
     def _load_face_detector(self):
         cascade_name = "haarcascade_frontalface_default.xml"

@@ -362,6 +362,7 @@ class AuraPipeline:
                 history=self.config.detector.history,
                 var_threshold=self.config.detector.var_threshold,
                 learning_rate=self.config.detector.learning_rate,
+                max_detections=self.config.detector.max_detections,
             )
         if detector_type in {"hailo", "hailo_person"}:
             hailo_detector = HailoPersonDetector(
@@ -382,5 +383,6 @@ class AuraPipeline:
                 history=self.config.detector.history,
                 var_threshold=self.config.detector.var_threshold,
                 learning_rate=self.config.detector.learning_rate,
+                max_detections=self.config.detector.max_detections,
             )
         raise ValueError(f"Detector non supportato: {detector_type}")
