@@ -39,6 +39,9 @@ class HailoPersonDetector:
         self._init_error: str | None = None
         self._labels = self._load_labels(self.labels_path)
         self._resources: list[object] = []
+        self._detect_calls = 0
+        self._logged_preprocess = False
+        self._debug_lines: list[str] = []
         self._init_runtime()
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -51,7 +54,17 @@ class HailoPersonDetector:
         raw_predictions = self._infer(frame)
         detections = self._convert_predictions(raw_predictions, frame.shape[1], frame.shape[0])
         detections.sort(key=lambda item: item.score, reverse=True)
-        return detections[: self.max_detections]
+        limited = detections[: self.max_detections]
+        self._detect_calls += 1
+        best_score = max((item.score for item in limited), default=0.0)
+        summary = (
+            f"Hailo call={self._detect_calls} raw={len(raw_predictions or [])} "
+            f"filtered={len(limited)} best={best_score:.3f} thr={self.score_threshold:.2f}"
+        )
+        self._push_debug_line(summary)
+        if self._should_log_detection(len(raw_predictions or []), len(limited)):
+            print(f"[Aura Pi][Hailo] {summary}")
+        return limited
 
     def _init_runtime(self) -> None:
         if self.model_path is None:
@@ -176,6 +189,14 @@ class HailoPersonDetector:
                 resized = resized[:, :, 0]
             resized = resized[..., np.newaxis]
         batch = np.expand_dims(np.ascontiguousarray(resized), axis=0).astype(np.uint8)
+        if not self._logged_preprocess:
+            line = (
+                f"Hailo preprocess in={frame.shape} resized={resized.shape} "
+                f"model=({height},{width},{channels}) runtime={self._runtime_name}"
+            )
+            self._push_debug_line(line)
+            print(f"[Aura Pi][Hailo] {line}")
+            self._logged_preprocess = True
         return batch
 
     def _parse_hailo_outputs(self, outputs, output_infos) -> list[dict]:
@@ -185,10 +206,39 @@ class HailoPersonDetector:
         else:
             items = [("output", outputs)]
 
+        if self._detect_calls < 3:
+            shapes = []
+            for name, value in items:
+                try:
+                    shape = np.asarray(value).shape
+                except Exception:
+                    shape = "unavailable"
+                shapes.append(f"{name}:{shape}")
+            line = f"Hailo tensors {' | '.join(shapes)}"
+            self._push_debug_line(line)
+            print(f"[Aura Pi][Hailo] {line}")
+
         for output_index, (name, value) in enumerate(items):
             info = output_infos[output_index] if output_index < len(output_infos) else None
             parsed.extend(self._parse_output_tensor(value, info=info, fallback_name=name))
         return parsed
+
+    def _should_log_detection(self, raw_count: int, filtered_count: int) -> bool:
+        if self._detect_calls <= 5:
+            return True
+        if filtered_count == 0 and self._detect_calls % 15 == 0:
+            return True
+        if raw_count > 0 and filtered_count == 0 and self._detect_calls % 10 == 0:
+            return True
+        return False
+
+    def _push_debug_line(self, line: str) -> None:
+        self._debug_lines.append(line)
+        self._debug_lines = self._debug_lines[-6:]
+
+    @property
+    def debug_lines(self) -> list[str]:
+        return list(self._debug_lines)
 
     def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
         if isinstance(value, list):

@@ -249,7 +249,9 @@ class AuraPipeline:
                 if self.archive_recorder is not None and packet is not None and not paused:
                     self.archive_recorder.write(packet.frame)
 
-                cv2.imshow(self.config.video.window_name, self._prepare_preview(last_output))
+                preview = self._prepare_preview(last_output)
+                preview = self._draw_debug_overlay(preview)
+                cv2.imshow(self.config.video.window_name, preview)
 
                 key = cv2.waitKey(30 if paused else 1) & 0xFF
                 if key in (27, ord("q"), ord("s")):
@@ -324,6 +326,40 @@ class AuraPipeline:
         offset_y = max(0, (display_h - out_h) // 2)
         canvas[offset_y:offset_y + out_h, offset_x:offset_x + out_w] = resized
         return canvas
+
+    def _draw_debug_overlay(self, frame: np.ndarray) -> np.ndarray:
+        debug_lines = getattr(self.detector, "debug_lines", None)
+        if not debug_lines:
+            return frame
+
+        lines = list(debug_lines)[-6:]
+        if not lines:
+            return frame
+
+        output = frame.copy()
+        line_height = 22
+        padding = 12
+        box_width = min(output.shape[1] - 20, 920)
+        box_height = padding * 2 + len(lines) * line_height
+
+        overlay = output.copy()
+        cv2.rectangle(overlay, (10, 10), (10 + box_width, 10 + box_height), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.55, output, 0.45, 0.0, dst=output)
+
+        baseline_y = 10 + padding + 14
+        for line in lines:
+            cv2.putText(
+                output,
+                line,
+                (20, baseline_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.52,
+                (220, 220, 220),
+                1,
+                cv2.LINE_AA,
+            )
+            baseline_y += line_height
+        return output
 
     def _detect_display_size(self) -> tuple[int, int] | None:
         if platform.system() != "Linux":
