@@ -466,17 +466,32 @@ class HailoPersonDetector:
         y2 = float(bbox.get("y2", 0.0))
 
         # Accept normalized coordinates as well as pixel coordinates.
-        if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.0:
+        normalized_x = 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.5
+        normalized_y = 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.5
+        if normalized_x:
             x1 *= frame_width
             x2 *= frame_width
-        if 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.0:
+        if normalized_y:
             y1 *= frame_height
             y2 *= frame_height
 
         x = max(0, int(x1))
         y = max(0, int(y1))
-        w = max(0, int(x2 - x1))
-        h = max(0, int(y2 - y1))
+        w = int(x2 - x1)
+        h = int(y2 - y1)
+
+        if w <= 0 and x2 > 0:
+            w = int(x2)
+        if h <= 0 and y2 > 0:
+            h = int(y2)
+
+        if w <= 0 and x2 > x1:
+            w = int(round(x2 - x1))
+        if h <= 0 and y2 > y1:
+            h = int(round(y2 - y1))
+
+        w = max(0, w)
+        h = max(0, h)
         return x, y, w, h
 
     def _load_labels(self, labels_path: Path | None) -> dict[int, str]:
