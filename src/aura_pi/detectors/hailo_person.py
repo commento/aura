@@ -306,10 +306,10 @@ class HailoPersonDetector:
             return "Hailo decode: raw too short"
         a, b, c, d = [float(value) for value in raw[:4]]
         candidates = {
-            "yxyx": (b, a, d, c),
-            "xyxy": (a, b, c, d),
             "xywh": (a, b, c, d),
             "cxcywh": (a - c / 2.0, b - d / 2.0, c, d),
+            "yxyx": (b, a, d, c),
+            "xyxy": (a, b, c, d),
         }
         previews: list[str] = []
         for name, candidate in candidates.items():
@@ -334,7 +334,7 @@ class HailoPersonDetector:
                 w = x2 - x1
                 h = y2 - y1
             previews.append(f"{name}:x={int(x)} y={int(y)} w={int(w)} h={int(h)}")
-        return "Hailo decode " + " | ".join(previews[:3])
+        return "Hailo decode " + " | ".join(previews[:4])
 
     def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
         if isinstance(value, list):
@@ -395,9 +395,10 @@ class HailoPersonDetector:
         a, b, c, d = values[:4]
 
         candidates = [
+            (a, b, a + c, b + d),  # x, y, w, h
+            (a - c / 2.0, b - d / 2.0, a + c / 2.0, b + d / 2.0),  # cx, cy, w, h
             (b, a, d, c),  # y1, x1, y2, x2 -> x1, y1, x2, y2
             (a, b, c, d),  # x1, y1, x2, y2
-            (a - c / 2.0, b - d / 2.0, a + c / 2.0, b + d / 2.0),  # cx, cy, w, h
             (b - d / 2.0, a - c / 2.0, b + d / 2.0, a + c / 2.0),  # cy, cx, h, w
         ]
 
@@ -413,6 +414,8 @@ class HailoPersonDetector:
             if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.5 and 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.5:
                 candidate_score += 2.0
             if width <= 1.2 and height <= 1.2:
+                candidate_score += 1.0
+            if x2 > x1 and y2 > y1 and x1 >= -0.25 and y1 >= -0.25:
                 candidate_score += 1.0
 
             if candidate_score > best_score:
