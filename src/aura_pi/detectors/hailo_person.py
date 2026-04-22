@@ -62,6 +62,7 @@ class HailoPersonDetector:
         best_score = max((item.score for item in limited), default=0.0)
         raw_summary = self._raw_prediction_summary(raw_predictions)
         row_preview = self._raw_row_preview(raw_predictions)
+        decode_preview = self._raw_decode_preview(raw_predictions, frame.shape[1], frame.shape[0])
         summary = (
             f"Hailo call={self._detect_calls} raw={len(raw_predictions or [])} "
             f"filtered={len(limited)} best={best_score:.3f} thr={self.score_threshold:.2f}"
@@ -69,12 +70,14 @@ class HailoPersonDetector:
         self._push_debug_line(summary)
         self._push_debug_line(raw_summary)
         self._push_debug_line(row_preview)
+        self._push_debug_line(decode_preview)
         self._push_debug_line(self._last_filter_summary)
         self._push_debug_line(self._last_tensor_summary)
         if self._should_log_detection(len(raw_predictions or []), len(limited)):
             print(f"[Aura Pi][Hailo] {summary}")
             print(f"[Aura Pi][Hailo] {raw_summary}")
             print(f"[Aura Pi][Hailo] {row_preview}")
+            print(f"[Aura Pi][Hailo] {decode_preview}")
             print(f"[Aura Pi][Hailo] {self._last_filter_summary}")
         return limited
 
@@ -294,6 +297,44 @@ class HailoPersonDetector:
             f"x2={float(bbox.get('x2', 0.0)):.3f} y2={float(bbox.get('y2', 0.0)):.3f} "
             f"raw=[{raw_text}]"
         )
+
+    def _raw_decode_preview(self, predictions: list[dict] | None, frame_width: int, frame_height: int) -> str:
+        if not predictions:
+            return "Hailo decode: none"
+        raw = predictions[0].get("raw_row", [])
+        if len(raw) < 4:
+            return "Hailo decode: raw too short"
+        a, b, c, d = [float(value) for value in raw[:4]]
+        candidates = {
+            "yxyx": (b, a, d, c),
+            "xyxy": (a, b, c, d),
+            "xywh": (a, b, c, d),
+            "cxcywh": (a - c / 2.0, b - d / 2.0, c, d),
+        }
+        previews: list[str] = []
+        for name, candidate in candidates.items():
+            if name in {"xywh", "cxcywh"}:
+                x, y, w, h = candidate
+                if 0.0 <= x <= 1.0 and 0.0 < w <= 1.5:
+                    x *= frame_width
+                    w *= frame_width
+                if 0.0 <= y <= 1.0 and 0.0 < h <= 1.5:
+                    y *= frame_height
+                    h *= frame_height
+            else:
+                x1, y1, x2, y2 = candidate
+                if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.5:
+                    x1 *= frame_width
+                    x2 *= frame_width
+                if 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.5:
+                    y1 *= frame_height
+                    y2 *= frame_height
+                x = x1
+                y = y1
+                w = x2 - x1
+                h = y2 - y1
+            previews.append(f"{name}:x={int(x)} y={int(y)} w={int(w)} h={int(h)}")
+        return "Hailo decode " + " | ".join(previews[:3])
 
     def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
         if isinstance(value, list):
