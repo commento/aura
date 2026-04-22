@@ -60,16 +60,19 @@ class HailoPersonDetector:
         self._detect_calls += 1
         best_score = max((item.score for item in limited), default=0.0)
         raw_summary = self._raw_prediction_summary(raw_predictions)
+        row_preview = self._raw_row_preview(raw_predictions)
         summary = (
             f"Hailo call={self._detect_calls} raw={len(raw_predictions or [])} "
             f"filtered={len(limited)} best={best_score:.3f} thr={self.score_threshold:.2f}"
         )
         self._push_debug_line(summary)
         self._push_debug_line(raw_summary)
+        self._push_debug_line(row_preview)
         self._push_debug_line(self._last_tensor_summary)
         if self._should_log_detection(len(raw_predictions or []), len(limited)):
             print(f"[Aura Pi][Hailo] {summary}")
             print(f"[Aura Pi][Hailo] {raw_summary}")
+            print(f"[Aura Pi][Hailo] {row_preview}")
         return limited
 
     def _init_runtime(self) -> None:
@@ -274,6 +277,18 @@ class HailoPersonDetector:
         top = " | ".join(top_scores[:4])
         return f"Hailo raw labels {common} c0={class_zero} top={top}"
 
+    def _raw_row_preview(self, predictions: list[dict] | None) -> str:
+        if not predictions:
+            return "Hailo row: none"
+        item = predictions[0]
+        bbox = item.get("bbox", {})
+        return (
+            "Hailo row "
+            f"cls={item.get('class_id')} score={float(item.get('score', 0.0)):.3f} "
+            f"x1={float(bbox.get('x1', 0.0)):.3f} y1={float(bbox.get('y1', 0.0)):.3f} "
+            f"x2={float(bbox.get('x2', 0.0)):.3f} y2={float(bbox.get('y2', 0.0)):.3f}"
+        )
+
     def _parse_output_tensor(self, value, info=None, fallback_name: str = "output") -> list[dict]:
         if isinstance(value, list):
             return self._parse_nms_list(value)
@@ -389,9 +404,11 @@ class HailoPersonDetector:
         if self._is_target_label(label):
             return True
         class_id = item.get("class_id")
+        normalized_target = self.target_label.strip().lower()
+        if normalized_target in {"*", "any", "all"}:
+            return True
         if class_id is None:
             return False
-        normalized_target = self.target_label.strip().lower()
         if normalized_target.isdigit():
             return int(class_id) == int(normalized_target)
         return normalized_target == "person" and int(class_id) == 0

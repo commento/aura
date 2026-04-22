@@ -19,7 +19,7 @@ detector:
   interval: 3
   score_threshold: 0.1
   max_detections: 6
-  target_label: "16"
+  target_label: "*"
   model_path: /home/commento/Downloads/yolov8n.hef
   labels_path:
 
