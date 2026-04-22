@@ -162,9 +162,19 @@ class HailoPersonDetector:
     def _preprocess_frame(self, frame: np.ndarray, width: int, height: int, channels: int) -> np.ndarray:
         resized = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
         if channels == 3:
+            if resized.ndim == 2:
+                resized = np.repeat(resized[..., np.newaxis], 3, axis=2)
+            elif resized.ndim == 3 and resized.shape[2] == 1:
+                resized = np.repeat(resized, 3, axis=2)
+            elif resized.ndim == 3 and resized.shape[2] > 3:
+                resized = resized[:, :, :3]
             resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         elif channels == 1:
-            resized = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)[..., np.newaxis]
+            if resized.ndim == 3 and resized.shape[2] >= 3:
+                resized = cv2.cvtColor(resized[:, :, :3], cv2.COLOR_BGR2GRAY)
+            elif resized.ndim == 3 and resized.shape[2] == 1:
+                resized = resized[:, :, 0]
+            resized = resized[..., np.newaxis]
         batch = np.expand_dims(np.ascontiguousarray(resized), axis=0).astype(np.uint8)
         return batch
 
