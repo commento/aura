@@ -239,7 +239,18 @@ class AuraPipeline:
                     if should_detect:
                         self._last_detections = self.detector.detect(packet.frame)
                     detections = self._last_detections
-                    performers = self.tracker.update(detections)
+                    if self.config.render.debug_boxes:
+                        performers = [
+                            TrackedPerformer(
+                                track_id=index + 1,
+                                bbox=(detection.x, detection.y, detection.w, detection.h),
+                                center=detection.center,
+                                age=1,
+                            )
+                            for index, detection in enumerate(detections)
+                        ]
+                    else:
+                        performers = self.tracker.update(detections)
                     audio_features = self.audio.read() if self.config.audio.enabled else AudioFeatures()
                     last_output = self.renderer.render(packet.frame, performers, audio_features)
                     self._frame_index += 1
