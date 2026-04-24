@@ -35,6 +35,7 @@ class HailoPersonDetector:
         self._resources: list[object] = []
         self._debug_rows_remaining = 8
         self._debug_items_remaining = 8
+        self._last_preprocess_meta: dict[str, float] | None = None
         self._init_runtime()
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -155,7 +156,31 @@ class HailoPersonDetector:
         return 640, 640, 3
 
     def _preprocess_frame(self, frame: np.ndarray, width: int, height: int, channels: int) -> np.ndarray:
-        resized = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+        img_h, img_w = frame.shape[:2]
+        scale = min(width / max(img_w, 1), height / max(img_h, 1))
+        new_w = max(1, int(img_w * scale))
+        new_h = max(1, int(img_h * scale))
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+
+        if resized.ndim == 2:
+            padded = np.full((height, width), 114, dtype=np.uint8)
+        else:
+            padded = np.full((height, width, resized.shape[2]), 114, dtype=np.uint8)
+
+        x_offset = (width - new_w) // 2
+        y_offset = (height - new_h) // 2
+        padded[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized
+        resized = padded
+        self._last_preprocess_meta = {
+            "scale": float(scale),
+            "x_offset": float(x_offset),
+            "y_offset": float(y_offset),
+            "orig_w": float(img_w),
+            "orig_h": float(img_h),
+            "input_w": float(width),
+            "input_h": float(height),
+        }
+
         if channels == 3:
             if resized.ndim == 2:
                 resized = np.repeat(resized[..., np.newaxis], 3, axis=2)
@@ -354,6 +379,14 @@ class HailoPersonDetector:
             y1 *= frame_height
             y2 *= frame_height
 
+        meta = self._last_preprocess_meta
+        if meta is not None:
+            scale = max(meta["scale"], 1e-6)
+            x1 = (x1 - meta["x_offset"]) / scale
+            x2 = (x2 - meta["x_offset"]) / scale
+            y1 = (y1 - meta["y_offset"]) / scale
+            y2 = (y2 - meta["y_offset"]) / scale
+
         x_low = min(x1, x2)
         y_low = min(y1, y2)
         x_high = max(x1, x2)
@@ -363,6 +396,12 @@ class HailoPersonDetector:
         y = max(0, int(round(y_low)))
         w = max(0, int(round(x_high - x_low)))
         h = max(0, int(round(y_high - y_low)))
+        x = min(x, max(frame_width - 1, 0))
+        y = min(y, max(frame_height - 1, 0))
+        if x + w > frame_width:
+            w = max(0, frame_width - x)
+        if y + h > frame_height:
+            h = max(0, frame_height - y)
         if self._debug_items_remaining > 0:
             label = item.get("label", "?")
             score = float(item.get("score", 0.0))
