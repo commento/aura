@@ -33,6 +33,8 @@ class HailoPersonDetector:
         self._init_error: str | None = None
         self._labels = self._load_labels(self.labels_path)
         self._resources: list[object] = []
+        self._debug_rows_remaining = 8
+        self._debug_items_remaining = 8
         self._init_runtime()
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -221,6 +223,10 @@ class HailoPersonDetector:
         for row in rows:
             if len(row) < 5:
                 continue
+            if self._debug_rows_remaining > 0:
+                preview = [float(item) for item in row[:8]]
+                print("[HAILO RAW ROW]", preview)
+                self._debug_rows_remaining -= 1
             x1, y1, x2, y2, score = self._decode_bbox_row(row)
             class_id = self._row_class_id(row)
             resolved_label = label or self._output_label(info=info, fallback_name=fallback_name, class_id=class_id)
@@ -236,10 +242,40 @@ class HailoPersonDetector:
 
     def _decode_bbox_row(self, row) -> tuple[float, float, float, float, float]:
         values = [float(item) for item in row[:6]]
-        if len(values) >= 6:
-            y1, x1, y2, x2, score, _ = values[:6]
-            return x1, y1, x2, y2, score
-        y1, x1, y2, x2, score = values[:5]
+        score = values[4] if len(values) >= 5 else 0.0
+        a, b, c, d = values[:4]
+
+        candidates = [
+            (a, b, c, d),  # x1, y1, x2, y2
+            (b, a, d, c),  # y1, x1, y2, x2
+            (a, b, a + c, b + d),  # x, y, w, h
+            (a - c / 2.0, b - d / 2.0, a + c / 2.0, b + d / 2.0),  # cx, cy, w, h
+        ]
+
+        best = None
+        best_score = float("-inf")
+
+        for x1, y1, x2, y2 in candidates:
+            w = x2 - x1
+            h = y2 - y1
+            if w <= 0 or h <= 0:
+                continue
+
+            candidate_score = 0.0
+            if 0.0 <= x1 <= 1.5 and 0.0 <= x2 <= 1.5 and 0.0 <= y1 <= 1.5 and 0.0 <= y2 <= 1.5:
+                candidate_score += 10.0
+            if w <= 1.5 and h <= 1.5:
+                candidate_score += 5.0
+            candidate_score += min(w * h, 10.0)
+
+            if candidate_score > best_score:
+                best_score = candidate_score
+                best = (x1, y1, x2, y2)
+
+        if best is None:
+            return a, b, c, d, score
+
+        x1, y1, x2, y2 = best
         return x1, y1, x2, y2, score
 
     def _output_label(self, info=None, fallback_name: str = "output", class_id: int = 0) -> str:
@@ -311,17 +347,28 @@ class HailoPersonDetector:
         x2 = float(bbox.get("x2", 0.0))
         y2 = float(bbox.get("y2", 0.0))
 
-        if 0.0 <= x1 <= 1.0 and 0.0 <= x2 <= 1.0:
+        if 0.0 <= x1 <= 1.5 and 0.0 <= x2 <= 1.5:
             x1 *= frame_width
             x2 *= frame_width
-        if 0.0 <= y1 <= 1.0 and 0.0 <= y2 <= 1.0:
+        if 0.0 <= y1 <= 1.5 and 0.0 <= y2 <= 1.5:
             y1 *= frame_height
             y2 *= frame_height
 
-        x = max(0, int(x1))
-        y = max(0, int(y1))
-        w = max(0, int(x2 - x1))
-        h = max(0, int(y2 - y1))
+        x_low = min(x1, x2)
+        y_low = min(y1, y2)
+        x_high = max(x1, x2)
+        y_high = max(y1, y2)
+
+        x = max(0, int(round(x_low)))
+        y = max(0, int(round(y_low)))
+        w = max(0, int(round(x_high - x_low)))
+        h = max(0, int(round(y_high - y_low)))
+        if self._debug_items_remaining > 0:
+            label = item.get("label", "?")
+            score = float(item.get("score", 0.0))
+            print("[HAILO ITEM]", item)
+            print("[HAILO BBOX]", x, y, w, h, "score", score, "label", label)
+            self._debug_items_remaining -= 1
         return x, y, w, h
 
     def _load_labels(self, labels_path: Path | None) -> dict[int, str]:
